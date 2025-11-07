@@ -1,26 +1,43 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 function Login() {
   const [group, setGroup] = useState('');
   const navigate = useNavigate();
+  const { loginWithTelegram, loading, error, user } = useAuth();
+  const [tgAvailable, setTgAvailable] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    setTgAvailable(!!(window.Telegram?.WebApp));
+  }, []);
+
+  useEffect(() => {
+    if (user) navigate('/event');
+  }, [user, navigate]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (group.trim()) {
-      console.log('User group:', group);
-      navigate('/profile');
+    setSubmitError(null);
+    if (!group.trim()) {
+      setSubmitError('Введите номер группы');
+      return;
+    }
+    try {
+      await loginWithTelegram(group.trim());
+      navigate('/event');
+    } catch (e: any) {
+      setSubmitError(e?.message || 'Ошибка авторизации');
     }
   };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
       <div className="w-full max-w-sm p-8 space-y-6 bg-surface rounded-xl shadow-lg border border-border-color">
-        <h1 className="text-xl font-bold text-center text-text-primary">
-          Регистрация
-        </h1>
+        <h1 className="text-xl font-bold text-center text-text-primary">Вход через Telegram</h1>
         <p className="text-center text-text-secondary text-xs">
-          Введите номер вашей учебной группы для продолжения.
+          {tgAvailable ? 'Откройте мини‑приложение в Telegram и добавьте номер группы.' : 'Telegram WebApp не обнаружен — откройте через Telegram. Можно протестировать локально параметром tgWebAppData.'}
         </p>
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
@@ -40,11 +57,20 @@ function Login() {
           </div>
           <button
             type="submit"
-            className="w-full px-4 py-2 text-background font-semibold bg-primary rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+            disabled={loading}
+            className="w-full px-4 py-2 text-background font-semibold bg-primary rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50"
           >
-            Начать
+            {loading ? 'Авторизация...' : 'Войти'}
           </button>
         </form>
+        {(error || submitError) && (
+          <div className="text-center text-[10px] text-red-400">
+            {error || submitError}
+          </div>
+        )}
+        <div className="text-center text-[10px] text-text-secondary">
+          Данные Telegram подписываются и проверяются на сервере. Мы сохраняем группу и выдаём ваши возможности.
+        </div>
       </div>
     </div>
   );

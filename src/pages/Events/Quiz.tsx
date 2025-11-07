@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import {
   ArrowRightCircleIcon,
   ArrowLeftCircleIcon,
@@ -39,22 +40,7 @@ const questions: Question[] = [
   },
 ];
 
-const API_ENDPOINT = 'https://tou-event.ddns.net/api/api/v1/quiz/check/test';
-
-function getAuthToken(): string | null {
-  // Попытки получить токен из разных источников
-  if (typeof window === 'undefined') return null;
-  const lsKeys = ['authToken', 'token', 'tg_token'];
-  for (const k of lsKeys) {
-    const v = window.localStorage.getItem(k);
-    if (v) return v;
-  }
-  // Если используете Telegram WebApp, можно прокинуть токен через initData или query
-  const params = new URLSearchParams(window.location.search);
-  const p = params.get('token');
-  if (p) return p;
-  return null;
-}
+const API_ENDPOINT = 'https://tou-event.ddns.net/api/v1/quiz/check/test';
 
 function Quiz() {
   const [started, setStarted] = useState(false); // экран "Начать тест"
@@ -63,6 +49,9 @@ function Quiz() {
   const [submitting, setSubmitting] = useState(false);
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { user, awardCoins } = useAuth();
+  const [awarding, setAwarding] = useState(false);
+  const [awardError, setAwardError] = useState<string | null>(null);
 
   const q = questions[index];
   const isLast = index === questions.length - 1;
@@ -75,11 +64,6 @@ function Quiz() {
   const goPrev = () => setIndex((i) => Math.max(0, i - 1));
 
   const submitQuiz = async () => {
-    const token = getAuthToken();
-    if (!token) {
-      setErrorMsg('Нет токена авторизации. Поместите его в localStorage под ключом "authToken" или добавьте ?token=... в URL.');
-      return;
-    }
     setSubmitting(true);
     setErrorMsg(null);
     setResultMsg(null);
@@ -94,7 +78,7 @@ function Quiz() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          ...(user?.telegramId ? { Authorization: user.telegramId } : {}),
         },
         body: JSON.stringify(body),
       });
@@ -140,6 +124,17 @@ function Quiz() {
           <div className="bg-surface border border-border-color rounded-xl p-6 shadow-lg mb-6">
             <p className="text-sm text-primary font-semibold mb-2">{resultMsg}</p>
             <p className="text-[11px] text-text-secondary mb-4">Можете закрыть страницу или вернуться назад.</p>
+            {!user?.isQuiz && (
+              <div className="mb-3">
+                <button
+                  disabled={awarding}
+                  onClick={async () => { setAwardError(null); setAwarding(true); try { await awardCoins('isQuiz', 50); } catch(e:any){ setAwardError(e?.message||'Ошибка награды'); } finally { setAwarding(false);} }}
+                  className="px-3 py-1 bg-primary/20 text-primary border border-primary/40 rounded text-xs disabled:opacity-50"
+                >{awarding ? 'Начисление...' : 'Ознакомиться (награда)'}
+                </button>
+                {awardError && <div className="text-[10px] text-red-400 mt-1">{awardError}</div>}
+              </div>
+            )}
             <button
               onClick={() => {
                 setStarted(false);

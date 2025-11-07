@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { HomeIcon, QuestionMarkCircleIcon, UserCircleIcon } from '@heroicons/react/24/outline';
 
 const navigation = [
-  { name: 'Мероприятие', href: '/event', icon: HomeIcon },
+  { name: 'Мероприятие', href: '/', icon: HomeIcon },
   { name: 'FAQ', href: '/faq', icon: QuestionMarkCircleIcon },
   { name: 'Профиль', href: '/profile', icon: UserCircleIcon },
 ];

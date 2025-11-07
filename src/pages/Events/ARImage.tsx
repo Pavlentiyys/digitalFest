@@ -1,13 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 
-declare global {
-  interface Window {
-    MINDAR: any;
-    THREE: any;
-  }
-}
-
-// Helper to dynamically load external scripts only once
+// Helper to dynamically load external scripts only once (classic <script>)
 const loadScript = (src: string) => {
   return new Promise<void>((resolve, reject) => {
     // If the script already exists, resolve immediately
@@ -20,9 +14,9 @@ const loadScript = (src: string) => {
     }
 
     const script = document.createElement('script');
-  script.src = src;
-  script.async = false; // preserve order
-  script.defer = false;
+    script.src = src;
+    script.async = false; // preserve order
+    script.defer = false;
     (script as any)._loaded = false;
     script.addEventListener('load', () => {
       (script as any)._loaded = true;
@@ -33,7 +27,7 @@ const loadScript = (src: string) => {
   });
 };
 
-// Try multiple CDNs/versions as fallbacks
+// Try multiple CDNs/versions as fallbacks for classic scripts
 const loadOneOf = async (urls: string[]) => {
   let lastErr: any;
   for (const url of urls) {
@@ -47,66 +41,26 @@ const loadOneOf = async (urls: string[]) => {
   throw lastErr || new Error('Failed to load any of the provided URLs');
 };
 
-const ensureMindARScripts = async () => {
-  // If already present, skip loading
-  if ((window as any).THREE && (window as any).MINDAR && (window as any).MINDAR.IMAGE) {
-    return;
-  }
-  // Prefer local files (public/libs) for reliability, fall back to CDNs
-  // Load Three FIRST (some mindar builds expect global THREE)
-  try {
-    await loadOneOf([
-      '/libs/three.min.js',
-      'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js',
-      'https://unpkg.com/three@0.152.2/build/three.min.js',
-    ]);
-  } catch (e) {
-    console.warn('[ARImage] Failed to load THREE from local/CDN', e);
-    throw e;
-  }
-
-  // MindAR image + three integration
-  try {
-    await loadOneOf([
-      '/libs/mindar-image-three.prod.js',
-      'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js',
-      'https://cdn.jsdelivr.net/npm/mind-ar@1.2.4/dist/mindar-image-three.prod.js',
-      'https://unpkg.com/mind-ar@1.2.5/dist/mindar-image-three.prod.js',
-      'https://unpkg.com/mind-ar@1.2.4/dist/mindar-image-three.prod.js',
-    ]);
-  } catch (e) {
-    console.warn('[ARImage] Failed to load MindAR image-three bundle; trying separated builds', e);
-    await loadOneOf([
-      'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js',
-      'https://unpkg.com/mind-ar@1.2.5/dist/mindar-image.prod.js',
-    ]);
-    await loadOneOf([
-      'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js',
-      'https://unpkg.com/mind-ar@1.2.5/dist/mindar-image-three.prod.js',
-    ]);
-  }
-
-  // Extra check/diagnostic
-  if (!(window as any).MINDAR) {
-    // Try to hint which file is missing
-    try {
-      const [threeRes, mindarRes] = await Promise.all([
-        fetch('/libs/three.min.js', { method: 'GET' }),
-        fetch('/libs/mindar-image-three.prod.js', { method: 'GET' }),
-      ]);
-      if (!threeRes.ok) {
-        throw new Error('Не найден /libs/three.min.js (скопируйте файл в public/libs)');
-      }
-      if (!mindarRes.ok) {
-        throw new Error('Не найден /libs/mindar-image-three.prod.js (скопируйте файл в public/libs)');
-      }
-    } catch (probeErr: any) {
-      throw new Error(`window.MINDAR is undefined after loading scripts. Проверка файлов: ${probeErr?.message || probeErr}`);
-    }
-    throw new Error('window.MINDAR is undefined after loading scripts');
-  }
-  if (!(window as any).MINDAR.IMAGE) {
-    throw new Error('window.MINDAR.IMAGE is undefined; mind-ar image tracking not available');
+// Ensure classic UMD globals (window.THREE, window.MINDAR.IMAGE)
+const ensureMindARGlobals = async () => {
+  // THREE first
+  await loadOneOf([
+    '/libs/three.min.js',
+    'https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js',
+    'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js',
+    'https://unpkg.com/three@0.146.0/build/three.min.js',
+  ]);
+  // MindAR UMD bundle (stable 1.1.5 first)
+  await loadOneOf([
+    '/libs/mindar-image-three.prod.js',
+    'https://cdn.jsdelivr.net/npm/mind-ar@1.1.5/dist/mindar-image-three.prod.js',
+    'https://cdn.jsdelivr.net/npm/mind-ar@1.2.0/dist/mindar-image-three.prod.js',
+    'https://cdn.jsdelivr.net/npm/mind-ar@1.2.4/dist/mindar-image-three.prod.js',
+    'https://unpkg.com/mind-ar@1.1.5/dist/mindar-image-three.prod.js',
+  ]);
+  if (!(window as any).THREE) throw new Error('THREE global not found after loading script');
+  if (!(window as any).MINDAR || !(window as any).MINDAR.IMAGE) {
+    throw new Error('MindAR UMD global not found (window.MINDAR.IMAGE missing)');
   }
 };
 
@@ -164,7 +118,8 @@ const makeCoinFaceTexture = (diameter = 512, bg = '#1b3439', fg = '#ffd166') => 
     ctx.stroke();
   }
 
-  const texture = new window.THREE.CanvasTexture(canvas);
+  // CanvasTexture будет создан позже через ESM THREE в месте использования
+  const texture = canvas as unknown as any;
   texture.anisotropy = 8;
   texture.needsUpdate = true;
   return texture;
@@ -179,15 +134,19 @@ const ARImage: React.FC = () => {
   const [hasTHREE, setHasTHREE] = useState<boolean>(!!(window as any).THREE);
   const [hasMINDAR, setHasMINDAR] = useState<boolean>(!!((window as any).MINDAR && (window as any).MINDAR.IMAGE));
   const [resolvedTarget, setResolvedTarget] = useState<string>('');
+  const { user, awardCoins } = useAuth();
+  const [awarding, setAwarding] = useState(false);
+  const [awardError, setAwardError] = useState<string | null>(null);
   const isSecure = typeof window !== 'undefined' ? (window.isSecureContext || window.location.hostname === 'localhost') : false;
 
   useEffect(() => {
     let stopped = false;
     let mindarThree: any;
     let renderer: any;
-  let scene: any;
-  let camera: any;
-  let coin: any;
+    let scene: any;
+    let camera: any;
+    let coin: any;
+  // use window globals for UMD
 
     const withTimeout = async <T,>(p: Promise<T>, ms: number, label: string): Promise<T> => {
       return await Promise.race([
@@ -199,8 +158,8 @@ const ARImage: React.FC = () => {
     const start = async () => {
       try {
         setLoading(true);
-        setLoadingStep('Загрузка библиотек AR...');
-  await withTimeout(ensureMindARScripts(), 8000, 'загрузка скриптов');
+  setLoadingStep('Загрузка библиотек AR...');
+  await withTimeout(ensureMindARGlobals(), 12000, 'загрузка скриптов');
   setHasTHREE(!!(window as any).THREE);
   setHasMINDAR(!!((window as any).MINDAR && (window as any).MINDAR.IMAGE));
         if (!containerRef.current) return;
@@ -210,13 +169,13 @@ const ARImage: React.FC = () => {
   setResolvedTarget(targetSrc);
   console.info('[ARImage] Using target:', targetSrc);
 
-        // Initialize MindAR
-        if (!window.MINDAR || !window.MINDAR.IMAGE) {
-          throw new Error('MindAR scripts did not initialize properly (MINDAR.IMAGE missing)');
+        // Initialize MindAR (UMD)
+        if (!(window as any).MINDAR || !(window as any).MINDAR.IMAGE) {
+          throw new Error('MindAR UMD did not initialize (window.MINDAR.IMAGE missing)');
         }
 
         setLoadingStep('Инициализация камеры...');
-        mindarThree = new window.MINDAR.IMAGE.MindARThree({
+        mindarThree = new (window as any).MINDAR.IMAGE.MindARThree({
           container: containerRef.current,
           imageTargetSrc: targetSrc,
           // ui: remove default if any
@@ -228,27 +187,28 @@ const ARImage: React.FC = () => {
         camera = context.camera;
 
         // Add light
-        const light = new window.THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+  const light = new (window as any).THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
         scene.add(light);
 
         // Anchor for first target (index 0)
-        const anchor = mindarThree.addAnchor(0);
-        const group = new window.THREE.Group();
+  const anchor = mindarThree.addAnchor(0);
+  const group = new (window as any).THREE.Group();
         anchor.group.add(group);
 
         // Build a 3D Bitcoin-like coin in Three.js
         const radius = 0.45;
         const thickness = 0.12;
         const radialSeg = 64;
-        const geo = new window.THREE.CylinderGeometry(radius, radius, thickness, radialSeg);
+  const geo = new (window as any).THREE.CylinderGeometry(radius, radius, thickness, radialSeg);
 
-        const gold = new window.THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.85, roughness: 0.25 });
-        const faceTex = makeCoinFaceTexture(512, '#0f262b', '#ffd166');
-        const faceMat = new window.THREE.MeshStandardMaterial({ map: faceTex, metalness: 0.6, roughness: 0.35 });
+  const gold = new (window as any).THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.85, roughness: 0.25 });
+  const faceTexCanvas = makeCoinFaceTexture(512, '#0f262b', '#ffd166');
+  const faceTex = new (window as any).THREE.CanvasTexture(faceTexCanvas);
+  const faceMat = new (window as any).THREE.MeshStandardMaterial({ map: faceTex, metalness: 0.6, roughness: 0.35 });
 
         // Order: around (index 0), top (1), bottom (2)
         const materials = [gold, faceMat, faceMat];
-        coin = new window.THREE.Mesh(geo, materials);
+  coin = new (window as any).THREE.Mesh(geo, materials);
         coin.rotation.x = Math.PI / 2; // face towards camera
         coin.castShadow = false;
         coin.receiveShadow = false;
@@ -284,9 +244,7 @@ const ARImage: React.FC = () => {
           '3) Для мобильного устройства откройте по HTTPS (localhost допустим).',
           '4) Если экран пуст — возможно, CDN недоступен. Перезагрузите страницу.',
         ];
-        const rootCauseHint = /MINDAR\.IMAGE/.test(e?.message || '')
-          ? 'MindAR bundle не загрузился (CDN блокируется или версия изменилась).'
-          : '';
+        const rootCauseHint = /MindAR/.test(e?.message || '') ? 'MindAR ESM не загрузился (CDN/сеть).' : '';
         setError(
           `Не удалось запустить AR. ${isLocalhost ? '' : 'На iOS камера доступна только по HTTPS. '}\n\nПодсказки:\n${advice.join('\n')}\n\n${rootCauseHint}\nДетали: ${e?.message || e}`
         );
@@ -395,6 +353,20 @@ const ARImage: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {/* Award button inline when AR initialized and not yet awarded */}
+      {!loading && !error && !user?.isAr && (
+        <div className="absolute bottom-4 right-4 z-50">
+          <button
+            disabled={awarding}
+            onClick={async () => {
+              setAwardError(null); setAwarding(true);
+              try { await awardCoins('isAr', 50); } catch (e:any){ setAwardError(e?.message||'Ошибка награды'); } finally { setAwarding(false); }
+            }}
+            className="px-4 py-2 bg-primary/20 text-primary border border-primary/40 rounded text-xs disabled:opacity-50"
+          >{awarding ? 'Начисление...' : 'Ознакомиться (награда)'}</button>
+          {awardError && <div className="text-[10px] text-red-400 mt-1">{awardError}</div>}
         </div>
       )}
     </div>

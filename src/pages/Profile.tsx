@@ -1,14 +1,51 @@
-import { PencilIcon } from '@heroicons/react/24/solid';
-
-// Моковые данные пользователя
-const user = {
-  name: 'Иван Иванов',
-  avatarUrl: 'https://via.placeholder.com/150', // URL аватара из Telegram
-  group: 'ИКБО-01-23',
-  score: 1250,
-};
+import { PencilIcon, XMarkIcon, CheckIcon } from '@heroicons/react/24/solid';
+import { useAuth } from '../context/AuthContext';
+import { useState } from 'react';
 
 function Profile() {
+  const { user, logout, updateProfile, error } = useAuth();
+  const [editing, setEditing] = useState(false);
+  const [username, setUsername] = useState(user?.username || '');
+  const [group, setGroup] = useState(user?.group || '');
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState(false);
+
+  if (!user) return null;
+
+  const startEdit = () => {
+    setEditing(true);
+    setUsername(user.username || '');
+    setGroup(user.group || '');
+    setLocalError(null);
+    setSuccess(false);
+  };
+  const cancel = () => {
+    setEditing(false);
+    setLocalError(null);
+  };
+  const save = async () => {
+    const u = username.trim();
+    const g = group.trim();
+    if (!u || !g) {
+      setLocalError('Заполните имя и группу');
+      return;
+    }
+    setSaving(true);
+    setLocalError(null);
+    setSuccess(false);
+    try {
+      await updateProfile({ username: u, group: g });
+      setEditing(false);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 2500);
+    } catch (e: any) {
+      setLocalError(e?.message || 'Ошибка сохранения');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="p-6 bg-background min-h-screen">
       <div className="max-w-md mx-auto bg-surface rounded-2xl shadow-lg overflow-hidden border border-border-color">
@@ -17,24 +54,74 @@ function Profile() {
             <div className="relative">
               <img
                 className="w-24 h-24 rounded-full object-cover border-4 border-primary"
-                src={user.avatarUrl}
+                src={"https://via.placeholder.com/150"}
                 alt="User Avatar"
               />
-              <button
-                className="absolute bottom-0 right-0 bg-primary p-2 rounded-full text-background hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
-                aria-label="Редактировать профиль"
-              >
-                <PencilIcon className="h-4 w-4" />
-              </button>
+              {!editing && (
+                <button
+                  onClick={startEdit}
+                  className="absolute bottom-0 right-0 bg-primary p-2 rounded-full text-background hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+                  aria-label="Редактировать профиль"
+                >
+                  <PencilIcon className="h-4 w-4" />
+                </button>
+              )}
             </div>
-            <h1 className="mt-4 text-xl font-bold text-text-primary">{user.name}</h1>
-            <p className="mt-1 text-sm text-text-secondary">{user.group}</p>
+            {!editing ? (
+              <>
+                <h1 className="mt-4 text-xl font-bold text-text-primary">{user.username || 'Пользователь'}</h1>
+                <p className="mt-1 text-sm text-text-secondary">Группа: {user.group}</p>
+              </>
+            ) : (
+              <div className="mt-4 w-full space-y-3">
+                <div>
+                  <label className="block text-[10px] text-text-secondary mb-1">Имя пользователя</label>
+                  <input
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    className="w-full bg-white/5 border border-border-color rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-text-secondary mb-1">Группа</label>
+                  <input
+                    value={group}
+                    onChange={e => setGroup(e.target.value)}
+                    className="w-full bg-white/5 border border-border-color rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+                {localError && <div className="text-[10px] text-red-400">{localError}</div>}
+                {error && <div className="text-[10px] text-red-400">{error}</div>}
+                <div className="flex gap-2 justify-end pt-1">
+                  <button
+                    onClick={cancel}
+                    disabled={saving}
+                    className="px-3 py-1 text-xs bg-white/10 text-white border border-white/20 rounded disabled:opacity-50 flex items-center gap-1"
+                  >
+                    <XMarkIcon className="w-3 h-3" /> Отмена
+                  </button>
+                  <button
+                    onClick={save}
+                    disabled={saving}
+                    className="px-3 py-1 text-xs bg-primary/20 text-primary border border-primary/40 rounded disabled:opacity-50 flex items-center gap-1"
+                  >
+                    <CheckIcon className="w-3 h-3" /> {saving ? 'Сохранение...' : 'Сохранить'}
+                  </button>
+                </div>
+              </div>
+            )}
+            <p className="mt-1 text-[10px] text-text-secondary">Telegram ID: {user.telegramId}</p>
+            {success && <div className="mt-2 text-[10px] text-green-400">Сохранено</div>}
           </div>
 
           <div className="mt-8 text-center">
             <div className="p-6 bg-surface border border-dashed border-border-color rounded-xl">
-              <p className="text-xs font-medium text-primary">Ваши баллы</p>
-              <p className="mt-1 text-3xl font-bold text-text-primary">{user.score}</p>
+              <p className="text-xs font-medium text-primary">Ваши монеты</p>
+              <p className="mt-1 text-3xl font-bold text-text-primary">{user.coins}</p>
+              <div className="text-[10px] text-text-secondary mt-2">
+                Доступы: T2T: {String(user.isTexted)} | A2T: {String(user.isTranscribed)} | T2I: {String(user.isImageGeneration)} | AR: {String(user.isAr)} | Quiz: {String(user.isQuiz)}
+              </div>
+              <button onClick={logout} className="mt-3 text-xs px-3 py-1 bg-white/10 text-white border border-white/20 rounded">Выйти</button>
             </div>
           </div>
         </div>

@@ -25,6 +25,7 @@ function Event() {
               let href: string;
               if (event.id === 4) href = '/ar-image';
               else if (event.name.startsWith('AR')) href = '/ar';
+              else if (event.id === 2 || event.name.toLowerCase().includes('qr')) href = '/qr';
               else if (event.name.includes('Квиз') || event.id === 3) href = '/quiz';
               else href = `/event/${event.id}`;
               return (

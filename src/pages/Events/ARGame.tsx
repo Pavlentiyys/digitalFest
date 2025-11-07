@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { BoltIcon, CameraIcon, CheckCircleIcon, XMarkIcon } from '@heroicons/react/24/solid';
 
 type Target = {
@@ -50,6 +51,10 @@ function ARGame() {
   const [score, setScore] = useState(0);
   const [modal, setModal] = useState<{ title: string; text: string; points: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { user, awardCoins } = useAuth();
+  const [awarding, setAwarding] = useState(false);
+  const [awardError, setAwardError] = useState<string | null>(null);
+  const earned = targets.filter(t => t.collected).length > 0; // simple condition: collected at least one
 
   const MAX_TARGETS = 4;
 
@@ -194,6 +199,21 @@ function ARGame() {
                 <span className="text-text-primary">+{modal.points} баллов</span>
               </div>
             </div>
+          </div>
+        )}
+        {/* Award button (inline) */}
+        {started && !user?.isAr && earned && (
+          <div className="mt-4">
+            <button
+              disabled={awarding}
+              onClick={async () => {
+                setAwardError(null); setAwarding(true);
+                try { await awardCoins('isAr', 50); } catch (e:any){ setAwardError(e?.message||'Ошибка награды'); } finally { setAwarding(false); }
+              }}
+              className="px-4 py-2 bg-primary/20 text-primary border border-primary/40 rounded text-sm disabled:opacity-50"
+            >{awarding ? 'Начисление...' : 'Ознакомиться (награда)'}
+            </button>
+            {awardError && <div className="text-[11px] text-red-400 mt-1">{awardError}</div>}
           </div>
         )}
       </div>
