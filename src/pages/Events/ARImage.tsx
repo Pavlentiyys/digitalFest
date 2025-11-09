@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useAuth } from '../../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
+// import { useAuth } from '../../context/AuthContext';
 
 // Helper to dynamically load external scripts only once (classic <script>)
 const loadScript = (src: string) => {
@@ -27,7 +28,23 @@ const loadScript = (src: string) => {
   });
 };
 
-// Try multiple CDNs/versions as fallbacks for classic scripts
+// Helper to dynamically load external CSS using <link>
+const loadCss = (href: string) => {
+  return new Promise<void>((resolve, reject) => {
+    const existing = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+      .find((l) => (l as HTMLLinkElement).href === href) as HTMLLinkElement | undefined;
+    if (existing) return resolve();
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.addEventListener('load', () => resolve());
+    link.addEventListener('error', () => reject(new Error(`Failed to load CSS ${href}`)));
+    document.head.appendChild(link);
+  });
+};
+
+
+// Try multiple CDNs/versions as fallbacks for classic scripts / css
 const loadOneOf = async (urls: string[]) => {
   let lastErr: any;
   for (const url of urls) {
@@ -39,6 +56,19 @@ const loadOneOf = async (urls: string[]) => {
     }
   }
   throw lastErr || new Error('Failed to load any of the provided URLs');
+};
+
+const loadCssOneOf = async (urls: string[]) => {
+  let lastErr: any;
+  for (const url of urls) {
+    try {
+      await loadCss(url);
+      return;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('Failed to load any of the provided CSS URLs');
 };
 
 // Ensure classic UMD globals (window.THREE, window.MINDAR.IMAGE)
@@ -58,6 +88,15 @@ const ensureMindARGlobals = async () => {
     'https://cdn.jsdelivr.net/npm/mind-ar@1.2.4/dist/mindar-image-three.prod.js',
     'https://unpkg.com/mind-ar@1.1.5/dist/mindar-image-three.prod.js',
   ]);
+  // MindAR CSS (not strictly required, but gives default styles & z-index layering). Ignore errors.
+  try {
+    await loadCssOneOf([
+      '/libs/mindar-image-three.prod.css',
+      'https://cdn.jsdelivr.net/npm/mind-ar@1.1.5/dist/mindar-image-three.prod.css',
+      'https://cdn.jsdelivr.net/npm/mind-ar@1.2.4/dist/mindar-image-three.prod.css',
+      'https://unpkg.com/mind-ar@1.1.5/dist/mindar-image-three.prod.css',
+    ]);
+  } catch {/* optional */}
   if (!(window as any).THREE) throw new Error('THREE global not found after loading script');
   if (!(window as any).MINDAR || !(window as any).MINDAR.IMAGE) {
     throw new Error('MindAR UMD global not found (window.MINDAR.IMAGE missing)');
@@ -68,17 +107,21 @@ const findTargetPath = async (): Promise<string> => {
   const candidates = ['/targets/target.mind', '/target/target.mind'];
   for (const c of candidates) {
     try {
-      const res = await fetch(c, { method: 'GET' });
-      if (res.ok) return c;
+      const res = await fetch(c, { method: 'GET', cache: 'no-store' });
+      if (!res.ok) continue;
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('text/html')) continue; // SPA fallback => wrong
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > 0) return c;
     } catch {
       // try next
     }
   }
-  // default
+  // default guess
   return '/targets/target.mind';
 };
 
-const makeCoinFaceTexture = (diameter = 512, bg = '#1b3439', fg = '#ffd166') => {
+const makeCoinFaceTexture = (diameter = 512, bg = '#1b3439', fg = '#ffd166', symbol: string = '₿') => {
   const canvas = document.createElement('canvas');
   canvas.width = diameter;
   canvas.height = diameter;
@@ -102,7 +145,6 @@ const makeCoinFaceTexture = (diameter = 512, bg = '#1b3439', fg = '#ffd166') => 
   ctx.font = `${Math.floor(diameter * 0.55)}px "Press Start 2P", system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const symbol = '₿';
   ctx.fillText(symbol, diameter / 2, diameter / 2 + diameter * 0.02);
 
   // subtle lines
@@ -131,22 +173,30 @@ const ARImage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadingStep, setLoadingStep] = useState<string>('Подготовка...');
   const [attempt, setAttempt] = useState(1);
-  const [hasTHREE, setHasTHREE] = useState<boolean>(!!(window as any).THREE);
-  const [hasMINDAR, setHasMINDAR] = useState<boolean>(!!((window as any).MINDAR && (window as any).MINDAR.IMAGE));
-  const [resolvedTarget, setResolvedTarget] = useState<string>('');
-  const { user, awardCoins } = useAuth();
-  const [awarding, setAwarding] = useState(false);
-  const [awardError, setAwardError] = useState<string | null>(null);
-  const isSecure = typeof window !== 'undefined' ? (window.isSecureContext || window.location.hostname === 'localhost') : false;
+  // Debug flags (kept for potential future HUD; currently unused -> removed to silence lint)
+  // const [hasTHREE, setHasTHREE] = useState<boolean>(!!(window as any).THREE);
+  // const [hasMINDAR, setHasMINDAR] = useState<boolean>(!!((window as any).MINDAR && (window as any).MINDAR.IMAGE));
+  // const [resolvedTarget, setResolvedTarget] = useState<string>('');
+//   const { user } = useAuth();
+  // derive visibility from activeCoin, no separate flag
+  const [activeCoin, setActiveCoin] = useState<null | 'btc' | 'eth' | 'doge'>(null);
+  // const isSecure = typeof window !== 'undefined' ? (window.isSecureContext || window.location.hostname === 'localhost') : false; // unused
+  const navigate = useNavigate();
+  const [showHelp, setShowHelp] = useState(false);
+  const [needsGesture, setNeedsGesture] = useState(false);
+  const mindarRef = useRef<any>(null);
 
   useEffect(() => {
-    let stopped = false;
+  let stopped = false;
     let mindarThree: any;
     let renderer: any;
     let scene: any;
     let camera: any;
-    let coin: any;
-  // use window globals for UMD
+  let coinBTC: any;
+  let coinETH: any;
+  let coinDOGE: any;
+    let fallbackVideo: HTMLVideoElement | null = null; // raw getUserMedia fallback
+    // use window globals for UMD
 
     const withTimeout = async <T,>(p: Promise<T>, ms: number, label: string): Promise<T> => {
       return await Promise.race([
@@ -158,16 +208,13 @@ const ARImage: React.FC = () => {
     const start = async () => {
       try {
         setLoading(true);
-  setLoadingStep('Загрузка библиотек AR...');
-  await withTimeout(ensureMindARGlobals(), 12000, 'загрузка скриптов');
-  setHasTHREE(!!(window as any).THREE);
-  setHasMINDAR(!!((window as any).MINDAR && (window as any).MINDAR.IMAGE));
+        setLoadingStep('Загрузка библиотек AR...');
+        await withTimeout(ensureMindARGlobals(), 12000, 'загрузка скриптов');
+  // Globals loaded
         if (!containerRef.current) return;
 
         setLoadingStep('Поиск файла таргета...');
   const targetSrc = await withTimeout(findTargetPath(), 3000, 'поиск target.mind');
-  setResolvedTarget(targetSrc);
-  console.info('[ARImage] Using target:', targetSrc);
 
         // Initialize MindAR (UMD)
         if (!(window as any).MINDAR || !(window as any).MINDAR.IMAGE) {
@@ -175,60 +222,144 @@ const ARImage: React.FC = () => {
         }
 
         setLoadingStep('Инициализация камеры...');
+        const srcWithBust = (targetSrc + (targetSrc.includes('?') ? '&' : '?') + 'v=' + Math.floor(Date.now() / 30000));
         mindarThree = new (window as any).MINDAR.IMAGE.MindARThree({
           container: containerRef.current,
-          imageTargetSrc: targetSrc,
-          // ui: remove default if any
+          imageTargetSrc: srcWithBust,
+          // hide default scanning/loading overlay (that square you see)
+          uiLoading: false,
+          uiScanning: false,
         });
+        mindarRef.current = mindarThree;
 
         const context = mindarThree;
         renderer = context.renderer;
         scene = context.scene;
         camera = context.camera;
 
-        // Add light
-  const light = new (window as any).THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+    // Add light
+    const light = new (window as any).THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
         scene.add(light);
 
-        // Anchor for first target (index 0)
-  const anchor = mindarThree.addAnchor(0);
-  const group = new (window as any).THREE.Group();
-        anchor.group.add(group);
+    // Helper to build coin mesh
+    const buildCoin = (symbol: string, bg: string, fg: string) => {
+      const radius = 0.45;
+      const thickness = 0.12;
+      const radialSeg = 64;
+      const geo = new (window as any).THREE.CylinderGeometry(radius, radius, thickness, radialSeg);
+      const gold = new (window as any).THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.85, roughness: 0.25 });
+      const faceTexCanvas = makeCoinFaceTexture(512, bg, fg, symbol);
+      const faceTex = new (window as any).THREE.CanvasTexture(faceTexCanvas);
+      const faceMat = new (window as any).THREE.MeshStandardMaterial({ map: faceTex, metalness: 0.6, roughness: 0.35 });
+      const materials = [gold, faceMat, faceMat];
+      const mesh = new (window as any).THREE.Mesh(geo, materials);
+      mesh.rotation.x = Math.PI / 2;
+      return mesh;
+    };
 
-        // Build a 3D Bitcoin-like coin in Three.js
-        const radius = 0.45;
-        const thickness = 0.12;
-        const radialSeg = 64;
-  const geo = new (window as any).THREE.CylinderGeometry(radius, radius, thickness, radialSeg);
+    // Anchors: 0 BTC, 1 ETH, 2 DOGE (target.mind must contain 3 targets)
+    const anchorBTC = mindarThree.addAnchor(0);
+    const groupBTC = new (window as any).THREE.Group();
+    anchorBTC.group.add(groupBTC);
+    coinBTC = buildCoin('₿', '#0f262b', '#ffd166');
+    groupBTC.add(coinBTC); groupBTC.visible = false;
+  anchorBTC.onTargetFound = () => { groupBTC.visible = true; setActiveCoin('btc'); console.log('[AR] BTC detected (anchor 0)'); };
+    anchorBTC.onTargetLost  = () => { groupBTC.visible = false; setActiveCoin(c => c==='btc'?null:c); };
 
-  const gold = new (window as any).THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.85, roughness: 0.25 });
-  const faceTexCanvas = makeCoinFaceTexture(512, '#0f262b', '#ffd166');
-  const faceTex = new (window as any).THREE.CanvasTexture(faceTexCanvas);
-  const faceMat = new (window as any).THREE.MeshStandardMaterial({ map: faceTex, metalness: 0.6, roughness: 0.35 });
+    try {
+      const anchorETH = mindarThree.addAnchor(1);
+      const groupETH = new (window as any).THREE.Group();
+      anchorETH.group.add(groupETH);
+      coinETH = buildCoin('Ξ', '#11192a', '#7dd3fc');
+      groupETH.add(coinETH); groupETH.visible = false;
+  anchorETH.onTargetFound = () => { groupETH.visible = true; setActiveCoin('eth'); console.log('[AR] ETH detected (anchor 1)'); };
+      anchorETH.onTargetLost  = () => { groupETH.visible = false; setActiveCoin(c => c==='eth'?null:c); };
+    } catch {/* if target.mind has only one target, ignore */}
 
-        // Order: around (index 0), top (1), bottom (2)
-        const materials = [gold, faceMat, faceMat];
-  coin = new (window as any).THREE.Mesh(geo, materials);
-        coin.rotation.x = Math.PI / 2; // face towards camera
-        coin.castShadow = false;
-        coin.receiveShadow = false;
-        group.add(coin);
+    try {
+      const anchorDOGE = mindarThree.addAnchor(2);
+      const groupDOGE = new (window as any).THREE.Group();
+      anchorDOGE.group.add(groupDOGE);
+      coinDOGE = buildCoin('Ð', '#1b3439', '#fbbf24');
+      groupDOGE.add(coinDOGE); groupDOGE.visible = false;
+  anchorDOGE.onTargetFound = () => { groupDOGE.visible = true; setActiveCoin('doge'); console.log('[AR] DOGE detected (anchor 2)'); };
+      anchorDOGE.onTargetLost  = () => { groupDOGE.visible = false; setActiveCoin(c => c==='doge'?null:c); };
+    } catch {/* ignore when no 3rd target */}
 
-        // Show/Hide coin with anchor visibility
-        anchor.onTargetFound = () => {
-          group.visible = true;
-        };
-        anchor.onTargetLost = () => {
-          group.visible = false;
-        };
-        group.visible = false;
+        let startedOk = false;
+        try {
+          await withTimeout(mindarThree.start(), 8000, 'запуск камеры/AR');
+          startedOk = true;
+        } catch (err) {
+          // Some environments (iOS/Telegram WebApp) require a user gesture to start the camera
+          setNeedsGesture(true);
+        }
 
-        await withTimeout(mindarThree.start(), 8000, 'запуск камеры/AR');
+        if (!startedOk) {
+          if (!stopped) {
+            setLoading(false);
+          }
+          return; // wait for user gesture to start
+        }
+
+        // Ensure MindAR video/canvas are visible and sized correctly
+        try {
+          const v: HTMLVideoElement | undefined = mindarThree.video;
+          if (v) {
+            v.setAttribute('playsinline', 'true');
+            v.setAttribute('muted', 'true');
+            v.setAttribute('autoplay', 'true');
+            v.playsInline = true; v.muted = true;
+            v.style.position = 'absolute';
+            v.style.inset = '0';
+            v.style.width = '100%';
+            v.style.height = '100%';
+            v.style.objectFit = 'cover';
+            v.style.zIndex = '1';
+            try { await v.play(); } catch {/* ignore */}
+          }
+          const canvas: HTMLCanvasElement | undefined = mindarThree.renderer?.domElement;
+          if (canvas) {
+            canvas.style.position = 'absolute';
+            canvas.style.inset = '0';
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+            canvas.style.zIndex = '2';
+            canvas.style.pointerEvents = 'none';
+          }
+        } catch {/* ignore */}
+
+        // If for some reason video track didn't start (some mobile browsers), attempt a manual probe and append raw video as fallback behind MindAR canvas.
+        const hasVideoTrack = !!mindarThree.video && mindarThree.video.srcObject && (mindarThree.video.srcObject as MediaStream).getVideoTracks().length > 0;
+        if (!hasVideoTrack) {
+          try {
+            const rawStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+            fallbackVideo = document.createElement('video');
+            fallbackVideo.setAttribute('playsinline','true');
+            fallbackVideo.setAttribute('muted','true');
+            fallbackVideo.setAttribute('autoplay','true');
+            fallbackVideo.playsInline = true;
+            fallbackVideo.muted = true;
+            fallbackVideo.autoplay = true;
+            fallbackVideo.style.position = 'absolute';
+            fallbackVideo.style.inset = '0';
+            fallbackVideo.style.width = '100%';
+            fallbackVideo.style.height = '100%';
+            fallbackVideo.style.objectFit = 'cover';
+            fallbackVideo.style.zIndex = '0';
+            fallbackVideo.srcObject = rawStream;
+            containerRef.current?.appendChild(fallbackVideo);
+            await fallbackVideo.play().catch(() => undefined);
+          } catch {/* ignore */}
+        } else {
+          // ensure play
+          try { await mindarThree.video.play(); } catch {/* ignore */}
+        }
 
         renderer.setAnimationLoop(() => {
-          if (coin && group.visible) {
-            coin.rotation.z += 0.01;
-          }
+          if (coinBTC && coinBTC.parent?.visible) coinBTC.rotation.z += 0.01;
+          if (coinETH && coinETH.parent?.visible) coinETH.rotation.z += 0.01;
+          if (coinDOGE && coinDOGE.parent?.visible) coinDOGE.rotation.z += 0.01;
           renderer.render(scene, camera);
         });
         if (!stopped) {
@@ -244,7 +375,13 @@ const ARImage: React.FC = () => {
           '3) Для мобильного устройства откройте по HTTPS (localhost допустим).',
           '4) Если экран пуст — возможно, CDN недоступен. Перезагрузите страницу.',
         ];
-        const rootCauseHint = /MindAR/.test(e?.message || '') ? 'MindAR ESM не загрузился (CDN/сеть).' : '';
+        let rootCauseHint = '';
+        const msg = String(e?.message || '');
+        if (/Extra \d+ byte\(s\) found|decodeSingleSync|importData/.test(msg)) {
+          rootCauseHint = 'Файл target.mind не найден или отдается как HTML. Убедитесь, что public/targets/target.mind существует и доступен (не index.html).';
+        } else if (/MindAR/.test(msg)) {
+          rootCauseHint = 'MindAR не загрузился (CDN/сеть).';
+        }
         setError(
           `Не удалось запустить AR. ${isLocalhost ? '' : 'На iOS камера доступна только по HTTPS. '}\n\nПодсказки:\n${advice.join('\n')}\n\n${rootCauseHint}\nДетали: ${e?.message || e}`
         );
@@ -262,32 +399,95 @@ const ARImage: React.FC = () => {
           mindarThree.renderer.setAnimationLoop(null);
           mindarThree.renderer.dispose?.();
         }
+        if (fallbackVideo?.srcObject) {
+          (fallbackVideo.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+        }
+        fallbackVideo?.remove();
       } catch {
         // ignore
       }
     };
-  }, []);
+  }, [attempt]);
+
+  const handleGestureStart = async () => {
+    const ctx = mindarRef.current;
+    if (!ctx) return;
+    try {
+      setError(null);
+      setLoading(true);
+      setLoadingStep('Запуск камеры...');
+      await ctx.start();
+      // Ensure video/canvas styling
+      try {
+        const v: HTMLVideoElement | undefined = ctx.video;
+        if (v) {
+          v.setAttribute('playsinline', 'true');
+          v.setAttribute('muted', 'true');
+          v.setAttribute('autoplay', 'true');
+          v.playsInline = true; v.muted = true;
+          v.style.position = 'absolute';
+          v.style.inset = '0';
+          v.style.width = '100%';
+          v.style.height = '100%';
+          v.style.objectFit = 'cover';
+          v.style.zIndex = '1';
+          try { await v.play(); } catch {/* ignore */}
+        }
+        const canvas: HTMLCanvasElement | undefined = ctx.renderer?.domElement;
+        if (canvas) {
+          canvas.style.position = 'absolute';
+          canvas.style.inset = '0';
+          canvas.style.width = '100%';
+          canvas.style.height = '100%';
+          canvas.style.zIndex = '2';
+          canvas.style.pointerEvents = 'none';
+        }
+      } catch {/* ignore */}
+      // Render loop (re-assign to be safe)
+      const renderer = ctx.renderer;
+      const scene = ctx.scene;
+      const camera = ctx.camera;
+      renderer.setAnimationLoop(() => {
+        renderer.render(scene, camera);
+      });
+      setNeedsGesture(false);
+    } catch (e: any) {
+      setError(e?.message || 'Не удалось запустить камеру');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="relative min-h-screen bg-background text-text-primary">
-      <div ref={containerRef} className="w-full h-[calc(100vh-4rem)] overflow-hidden" />
+      <div ref={containerRef} className="relative w-full h-[calc(100vh-4rem)] overflow-hidden bg-black">
+        {/* MindAR will inject its own canvas & video elements here. */}
+      </div>
 
       {/* HUD */}
       <div className="absolute top-0 left-0 right-0 p-4 flex items-center justify-between pointer-events-none">
         <div className="text-xs text-white/80 bg-black/40 px-3 py-1 rounded pointer-events-auto">
           Наведите камеру на целевое изображение
         </div>
-        <a href="/event" className="text-xs text-primary underline pointer-events-auto">
-          Назад
-        </a>
+        <div className="flex items-center gap-2 pointer-events-auto">
+          <button
+            className="px-3 py-1 text-[11px] bg-white/10 text-white border border-white/20 rounded"
+            onClick={() => setShowHelp(true)}
+          >Как пройти</button>
+          <a href="/event" className="text-xs text-primary underline">
+            Назад
+          </a>
+        </div>
       </div>
-      <div className="absolute bottom-2 left-2 text-[10px] text-white/80 bg-black/50 px-2 py-1 rounded space-y-0.5">
-        <div>MindAR + Three (local/CDN)</div>
-        <div>HTTPS/localhost: {isSecure ? 'ok' : 'нет'}</div>
-        <div>THREE: {hasTHREE ? 'ok' : 'нет'}</div>
-        <div>MINDAR.IMAGE: {hasMINDAR ? 'ok' : 'нет'}</div>
-        <div>target: {resolvedTarget || '/targets/target.mind | /target/target.mind'}</div>
-      </div>
+      {/* Bottom-centered details button (appears when any model/marker visible) */}
+      {activeCoin && (
+        <div className="pointer-events-none absolute bottom-4 left-0 right-0 flex justify-center">
+          <button
+            className="pointer-events-auto px-4 py-2 text-[12px] bg-primary text-background rounded-md border border-primary/60 shadow hover:opacity-90"
+            onClick={() => navigate(`/ar-fact/${activeCoin}`)}
+          >Подробнее о {activeCoin.toUpperCase()}</button>
+        </div>
+      )}
 
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 p-4">
@@ -300,35 +500,16 @@ const ARImage: React.FC = () => {
                 <div className="text-[10px] opacity-60 mt-1">Попытка: {attempt}</div>
               </div>
             </div>
-            <div className="mt-3 flex gap-2">
-              <button
-                className="px-3 py-1 text-[11px] bg-primary/20 text-primary border border-primary/40 rounded"
-                onClick={() => {
-                  // retry by increasing attempt and re-running effect
-                  setAttempt((a) => a + 1);
-                  setError(null);
-                  setLoading(true);
-                }}
-              >
-                Повторить
-              </button>
-              <button
-                className="px-3 py-1 text-[11px] bg-white/10 text-white border border-white/20 rounded"
-                onClick={async () => {
-                  // quick camera permission probe
-                  try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    stream.getTracks().forEach(t => t.stop());
-                    alert('Камера доступна. Попробуйте ещё раз.');
-                  } catch (err: any) {
-                    alert('Нет доступа к камере: ' + (err?.message || err));
-                  }
-                }}
-              >
-                Проверить камеру
-              </button>
-            </div>
           </div>
+        </div>
+      )}
+      {/* Tap-to-start overlay when user gesture is required */}
+      {needsGesture && !loading && !error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/50 p-4">
+          <button
+            className="px-5 py-3 rounded-md bg-primary text-background text-[12px] border border-primary/60 shadow"
+            onClick={handleGestureStart}
+          >Нажмите, чтобы запустить AR</button>
         </div>
       )}
       {error && (
@@ -355,18 +536,23 @@ const ARImage: React.FC = () => {
           </div>
         </div>
       )}
-      {/* Award button inline when AR initialized and not yet awarded */}
-      {!loading && !error && !user?.isAr && (
-        <div className="absolute bottom-4 right-4 z-50">
-          <button
-            disabled={awarding}
-            onClick={async () => {
-              setAwardError(null); setAwarding(true);
-              try { await awardCoins('isAr', 50); } catch (e:any){ setAwardError(e?.message||'Ошибка награды'); } finally { setAwarding(false); }
-            }}
-            className="px-4 py-2 bg-primary/20 text-primary border border-primary/40 rounded text-xs disabled:opacity-50"
-          >{awarding ? 'Начисление...' : 'Ознакомиться (награда)'}</button>
-          {awardError && <div className="text-[10px] text-red-400 mt-1">{awardError}</div>}
+      {/* Help modal */}
+      {showHelp && (
+        <div className="absolute inset-0 flex items-center justify-center p-6 z-50">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowHelp(false)} />
+          <div className="relative bg-surface border border-border-color rounded-xl p-4 text-xs leading-relaxed max-w-md w-full">
+            <div className="font-semibold text-primary mb-2">Как пройти AR‑ивент</div>
+            <ol className="list-decimal list-inside space-y-1 text-text-secondary">
+              <li>Разрешите доступ к камере в Telegram WebApp.</li>
+              <li>Наведите камеру на изображение‑маркер (target).</li>
+              <li>Дождитесь появления 3D‑монеты — она вращается.</li>
+              <li>Нажмите «Подробнее», чтобы открыть страницу факта и получить награду.</li>
+            </ol>
+            <div className="mt-3 text-[10px] text-text-secondary">Подсказка: если монета не появляется — перезапустите (кнопка Повторить) или проверьте файл target.mind.</div>
+            <div className="mt-3 text-right">
+              <button onClick={() => setShowHelp(false)} className="px-3 py-1 text-[11px] bg-primary/20 text-primary border border-primary/40 rounded">Понятно</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

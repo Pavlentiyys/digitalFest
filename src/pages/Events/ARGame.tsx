@@ -14,27 +14,27 @@ const FACTS: { title: string; text: string; points: number }[] = [
   {
     title: 'Биткоин (BTC)',
     text: 'Первая криптовалюта, запущена в 2009 году. Рыночная капитализация — крупнейшая среди криптоактивов.',
-    points: 20,
+    points: 50,
   },
   {
     title: 'Эфириум (ETH)',
     text: 'Платформа для смарт‑контрактов и dApp. Позволяет создавать токены и DeFi‑протоколы.',
-    points: 20,
+    points: 50,
   },
   {
     title: 'Стейблкоины',
     text: 'Токены, привязанные к фиатным валютам (например, USDT, USDC) для снижения волатильности.',
-    points: 15,
+    points: 50,
   },
   {
     title: 'NFT',
     text: 'Уникальные токены для учета цифровых прав на арт‑объекты, игровые предметы и т. д.',
-    points: 15,
+    points: 50,
   },
   {
     title: 'Блокчейн',
     text: 'Распределённый реестр, обеспечивающий прозрачность и неизменность записей.',
-    points: 10,
+    points: 50,
   },
 ];
 
@@ -55,6 +55,7 @@ function ARGame() {
   const [awarding, setAwarding] = useState(false);
   const [awardError, setAwardError] = useState<string | null>(null);
   const earned = targets.filter(t => t.collected).length > 0; // simple condition: collected at least one
+  const [showHelp, setShowHelp] = useState(false);
 
   const MAX_TARGETS = 4;
 
@@ -125,8 +126,14 @@ function ARGame() {
           <span className="opacity-80">Очки:</span>{' '}
           <span className="text-primary font-bold">{score}</span>
         </div>
-        <div className="px-3 py-2 rounded-md bg-background/60 border border-border-color text-text-secondary backdrop-blur">
-          Целей: <span className="text-primary">{targets.filter((t) => !t.collected).length}</span>
+        <div className="flex items-center gap-2">
+          <div className="px-3 py-2 rounded-md bg-background/60 border border-border-color text-text-secondary backdrop-blur">
+            Целей: <span className="text-primary">{targets.filter((t) => !t.collected).length}</span>
+          </div>
+          <button
+            onClick={() => setShowHelp(true)}
+            className="px-3 py-2 rounded-md bg-background/60 border border-border-color text-text-primary hover:border-primary"
+          >Как играть</button>
         </div>
       </div>
     ),
@@ -197,6 +204,24 @@ function ARGame() {
               <div className="flex items-center gap-2 text-sm">
                 <CheckCircleIcon className="h-4 w-4 text-primary" />
                 <span className="text-text-primary">+{modal.points} баллов</span>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Help modal */}
+        {showHelp && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setShowHelp(false)} />
+            <div className="relative bg-surface border border-border-color rounded-xl p-5 w-full max-w-md shadow-lg text-xs">
+              <div className="text-md font-bold text-primary mb-2">Как играть</div>
+              <ol className="list-decimal list-inside space-y-1 text-text-secondary">
+                <li>Разрешите доступ к камере в Telegram WebApp.</li>
+                <li>Нажмите «Начать AR‑игру», чтобы открыть видоискатель.</li>
+                <li>Ищите светящиеся значки и нажимайте на них, чтобы получить факты.</li>
+                <li>Баллы суммируются по мере сбора. После первого найденного объекта станет доступна награда.</li>
+              </ol>
+              <div className="text-right mt-3">
+                <button onClick={() => setShowHelp(false)} className="px-3 py-1 text-[11px] bg-primary/20 text-primary border border-primary/40 rounded">Понятно</button>
               </div>
             </div>
           </div>

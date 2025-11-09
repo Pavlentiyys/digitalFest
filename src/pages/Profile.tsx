@@ -1,4 +1,4 @@
-import { PencilIcon, XMarkIcon, CheckIcon } from '@heroicons/react/24/solid';
+import { PencilIcon, XMarkIcon, CheckIcon, CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useAuth } from '../context/AuthContext';
 import { useState } from 'react';
 
@@ -54,8 +54,9 @@ function Profile() {
             <div className="relative">
               <img
                 className="w-24 h-24 rounded-full object-cover border-4 border-primary"
-                src={"https://via.placeholder.com/150"}
+                src={user.avatarUrl || "https://via.placeholder.com/150"}
                 alt="User Avatar"
+                referrerPolicy="no-referrer"
               />
               {!editing && (
                 <button
@@ -118,11 +119,51 @@ function Profile() {
             <div className="p-6 bg-surface border border-dashed border-border-color rounded-xl">
               <p className="text-xs font-medium text-primary">Ваши монеты</p>
               <p className="mt-1 text-3xl font-bold text-text-primary">{user.coins}</p>
-              <div className="text-[10px] text-text-secondary mt-2">
-                Доступы: T2T: {String(user.isTexted)} | A2T: {String(user.isTranscribed)} | T2I: {String(user.isImageGeneration)} | AR: {String(user.isAr)} | Quiz: {String(user.isQuiz)}
-              </div>
+              <div className="text-[10px] text-text-secondary mt-2">Баллы копятся за активности ниже.</div>
               <button onClick={logout} className="mt-3 text-xs px-3 py-1 bg-white/10 text-white border border-white/20 rounded">Выйти</button>
             </div>
+          </div>
+
+          {/* Progress section */}
+          <div className="mt-6">
+            <h2 className="text-sm font-semibold text-text-primary mb-2">Прогресс по активностям</h2>
+            {(() => {
+              const items = [
+                { key: 'isAr', label: 'AR‑игра', done: !!user.isAr, href: '/ar-image', hint: 'Найдите постер «Отсканируй меня» и наведите камеру.' },
+                { key: 'isQuiz', label: 'IT‑Квиз', done: !!user.isQuiz, href: '/quiz', hint: 'Проверьте знания об IT и AI. Есть бонус за скорость.' },
+                { key: 'isTranscribed', label: 'QR‑квест: Аудио → Текст', done: !!user.isTranscribed, href: '/qr', hint: 'Сканируйте QR в популярных местах.' },
+                { key: 'isTexted', label: 'QR‑квест: Текст → Текст', done: !!user.isTexted, href: '/qr', hint: 'Сканируйте QR в популярных местах.' },
+                { key: 'isImageGeneration', label: 'QR‑квест: Текст → Изображение', done: !!user.isImageGeneration, href: '/qr', hint: 'Сканируйте QR в популярных местах.' },
+              ];
+              const doneCount = items.filter(it => it.done).length;
+              const total = items.length;
+              return (
+                <div className="bg-surface border border-border-color rounded-xl">
+                  <div className="px-4 py-2 text-[11px] text-text-secondary border-b border-border-color">Пройдено {doneCount} из {total}</div>
+                  <ul className="divide-y divide-border-color">
+                    {items.map(it => (
+                      <li key={it.key} className="px-4 py-3 flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm text-text-primary font-medium">{it.label}</div>
+                          <div className="text-[11px] text-text-secondary mt-0.5">{it.hint}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {it.done ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded bg-green-500/15 text-green-300 border border-green-500/30">
+                              <CheckCircleIcon className="h-3.5 w-3.5" /> Пройдено
+                            </span>
+                          ) : (
+                            <a href={it.href} className="inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded bg-primary text-background border border-primary/60 hover:opacity-90">
+                              Перейти
+                            </a>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>

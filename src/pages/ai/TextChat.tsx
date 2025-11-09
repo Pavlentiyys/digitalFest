@@ -1,3 +1,4 @@
+import { API_V1, tgHeaders } from '../../lib/api';
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -46,14 +47,13 @@ const TextChat: React.FC = () => {
     setLoading(true);
     try {
       const promptPayload = { prompt: buildPrompt(text) };
-  const res = await fetch('https://tou-event.ddns.net/api/v1/qr-code/generate-text', {
+    const res = await fetch(`${API_V1}/qr-code/generate-text`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(user?.telegramId ? { Authorization: user.telegramId } : {}) },
+      headers: { 'Content-Type': 'application/json', ...tgHeaders(user?.telegramId) },
         body: JSON.stringify(promptPayload)
       });
       if (!res.ok) {
-        const t = await res.text().catch(() => '');
-        throw new Error(`Ошибка ответа (${res.status}): ${t || 'unknown'}`);
+        throw new Error('Не удалось получить ответ');
       }
       const data: GenerateTextResponse = await res.json();
       setMessages(m => [...m, { role: 'assistant', content: data.text || 'Нет текста' }]);

@@ -1,3 +1,4 @@
+import { API_V1, tgHeaders } from '../../lib/api';
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -21,14 +22,13 @@ const TextToImage: React.FC = () => {
     if (!prompt.trim()) { setError('Введите prompt'); return; }
     setLoading(true);
     try {
-  const res = await fetch('https://tou-event.ddns.net/api/v1/image/generate', {
+      const res = await fetch(`${API_V1}/qr-code/generate-image`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(user?.telegramId ? { Authorization: user.telegramId } : {}) },
+        headers: { 'Content-Type': 'application/json', ...tgHeaders(user?.telegramId) },
         body: JSON.stringify({ prompt: prompt.trim(), width: DEFAULT_W, height: DEFAULT_H })
       });
       if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(`Ошибка (${res.status}): ${txt || 'unknown'}`);
+        throw new Error('Не удалось получить изображение');
       }
       const data = await res.json() as GenResponse;
       setImageUrl(data.imageUrl);

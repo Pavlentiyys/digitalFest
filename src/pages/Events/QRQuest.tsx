@@ -36,9 +36,12 @@ const QRQuest: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const streamRef = useRef<MediaStream | null>(null);
   const navigate = useNavigate();
+  const [showHelp, setShowHelp] = useState(false);
   // const { user } = useAuth();
 
   useEffect(() => {
+    // Prevent second getUserMedia after scanning finishes: only init when scanning===true
+    if (!scanning) return; // when scanning toggles to false effect re-runs but exits early
     let stream: MediaStream | null = null;
     let raf = 0;
     let lastScan = 0;
@@ -90,7 +93,18 @@ const QRQuest: React.FC = () => {
               setScanning(false);
               // Expecting either full http(s) URL or internal reward pattern like qr-reward:isTranscribed
               if (isHttpUrl(raw)) {
-                window.location.assign(raw);
+                // If QR points to same-origin SPA route -> use client-side navigation to avoid full reload & 404 on static hosting.
+                try {
+                  const url = new URL(raw);
+                  const sameOrigin = url.origin === window.location.origin;
+                  if (sameOrigin) {
+                    navigate(url.pathname + url.search + url.hash);
+                  } else {
+                    window.location.assign(raw);
+                  }
+                } catch {
+                  window.location.assign(raw);
+                }
               } else if (raw.startsWith('qr-reward:')) {
                 const feature = raw.split(':')[1];
                 navigate(`/qr-reward/${feature}`);
@@ -121,6 +135,13 @@ const QRQuest: React.FC = () => {
 
   return (
     <div className="relative min-h-screen bg-background text-text-primary">
+      {/* Help button and modal */}
+      <div className="absolute top-0 left-0 p-4 z-50">
+        <button
+          className="px-3 py-1 text-[11px] bg-white/10 text-white border border-white/20 rounded"
+          onClick={() => setShowHelp(true)}
+        >Как пройти</button>
+      </div>
   {/* Video preview */}
   <video ref={videoRef} className="w-full h-[calc(100vh-4rem)] object-cover" playsInline muted autoPlay />
       <canvas ref={canvasRef} className="hidden" />
@@ -151,6 +172,23 @@ const QRQuest: React.FC = () => {
       )}
 
       {/* No overlay after scan; direct navigation happens immediately */}
+      {showHelp && (
+        <div className="absolute inset-0 flex items-center justify-center p-6 z-50">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowHelp(false)} />
+          <div className="relative bg-surface border border-border-color rounded-xl p-4 text-xs leading-relaxed max-w-md w-full">
+            <div className="font-semibold text-primary mb-2">Как пройти QR‑ивент</div>
+            <ol className="list-decimal list-inside space-y-1 text-text-secondary">
+              <li>Разрешите доступ к камере.</li>
+              <li>Наведите рамку на QR‑код так, чтобы он полностью поместился.</li>
+              <li>Если код содержит ссылку на внутреннюю страницу — произойдёт мгновенный переход.</li>
+              <li>Специальные коды формата qr-reward:feature откроют страницу награды.</li>
+            </ol>
+            <div className="mt-3 text-right">
+              <button onClick={() => setShowHelp(false)} className="px-3 py-1 text-[11px] bg-primary/20 text-primary border border-primary/40 rounded">Понятно</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

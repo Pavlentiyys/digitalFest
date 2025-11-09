@@ -1,3 +1,4 @@
+import { API_V1, tgHeaders } from '../../lib/api';
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -24,6 +25,7 @@ const SpeechToText: React.FC = () => {
   const [transcribedText, setTranscribedText] = useState<string | null>(null);
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [ffmpegProgress, setFfmpegProgress] = useState<number | null>(null);
+  // no auth debug in UI
   const { user, awardCoins } = useAuth();
   const [awarding, setAwarding] = useState(false);
   const [awardError, setAwardError] = useState<string | null>(null);
@@ -129,16 +131,35 @@ const SpeechToText: React.FC = () => {
     try {
       const raw = new Blob(chunksRef.current, { type: mime || 'application/octet-stream' });
       const mp4 = await ensureMp4(raw);
-      const fd = new FormData();
-      fd.append('file', mp4, 'audio.mp4');
-  const res = await fetch('https://tou-event.ddns.net/api/v1/qr-code/transcribe', {
+        // Формируем FormData строго с ОДНИМ полем: 'file' (без доп. полей)
+        const fd = new FormData();
+        fd.append('file', mp4, 'audio.mp4');
+      // Prefer Bearer token when available (some backends require it). Fallback to telegramId header.
+      // Ранее использовали токен. Сейчас сервер требует только telegramId, поэтому токен не нужен.
+      // По требованию: НЕТ Bearer, только Authorization: <telegramId>
+  const headers: Record<string, string> = { ...tgHeaders(user?.telegramId, { includeAuthorization: true }), 'Accept': 'application/json' };
+
+      let res = await fetch(`${API_V1}/qr-code/transcribe`, {
         method: 'POST',
-        headers: user?.telegramId ? { Authorization: user.telegramId } : undefined,
-        body: fd
+        headers,
+        body: fd,
       });
+      // Если API строго ждёт иное имя поля (например 'audio' вместо 'file'), делаем одноразовый ретрай
+      if (!res.ok && res.status === 400) {
+        const bodyTxt = await res.text().catch(() => '');
+        if (/Unexpected field/i.test(bodyTxt)) {
+          const fd2 = new FormData();
+          fd2.append('audio', mp4, 'audio.mp4');
+          res = await fetch(`${API_V1}/qr-code/transcribe`, { method: 'POST', headers, body: fd2 });
+        } else {
+          // Попробуем альтернативный ключ 'file' без имени файла
+          const fd2 = new FormData();
+          fd2.append('file', mp4);
+          res = await fetch(`${API_V1}/qr-code/transcribe`, { method: 'POST', headers, body: fd2 });
+        }
+      }
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Ошибка загрузки (${res.status}): ${text || 'unknown'}`);
+        throw new Error('Не удалось отправить аудио');
       }
       try {
         const data = await res.json();
@@ -173,6 +194,7 @@ const SpeechToText: React.FC = () => {
           {error && (
             <div className="text-[11px] text-red-400">{error}</div>
           )}
+          {/* no auth debug */}
           {uploading && <div className="text-[11px] text-text-secondary">Загрузка...</div>}
           {transcribedText && (
             <div className="text-xs mt-2">

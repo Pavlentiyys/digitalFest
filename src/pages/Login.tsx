@@ -8,18 +8,21 @@ function Login() {
   const { loginWithTelegram, loading, error, user } = useAuth();
   const [tgAvailable, setTgAvailable] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // removed detailed error body debug
 
   useEffect(() => {
     setTgAvailable(!!(window.Telegram?.WebApp));
+    // no debug UI in production
   }, []);
 
   useEffect(() => {
-    if (user) navigate('/event');
+    if (user) navigate('/');
   }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
+  // no raw response capture
     if (!group.trim()) {
       setSubmitError('Введите номер группы');
       return;
@@ -29,6 +32,7 @@ function Login() {
       navigate('/event');
     } catch (e: any) {
       setSubmitError(e?.message || 'Ошибка авторизации');
+  // no raw bodies or debug info in UI
     }
   };
 
@@ -64,8 +68,11 @@ function Login() {
           </button>
         </form>
         {(error || submitError) && (
-          <div className="text-center text-[10px] text-red-400">
-            {error || submitError}
+          <div className="space-y-2">
+            <div className="text-center text-[10px] text-red-400">
+              {error || submitError}
+            </div>
+            {/* no debug blocks */}
           </div>
         )}
         <div className="text-center text-[10px] text-text-secondary">

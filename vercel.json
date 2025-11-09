@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://tou-event.ddns.net/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

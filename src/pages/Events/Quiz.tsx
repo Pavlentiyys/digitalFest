@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
   ArrowRightCircleIcon,
@@ -10,52 +10,111 @@ type Answer = { id: string; text: string };
 type Question = { id: string; text: string; answers: Answer[] };
 
 // Временные вопросы (пример). UUID'ы для совместимости с бэкендом
-const questions: Question[] = [
-  {
-    id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
-    text: 'Что означает аббревиатура IT?',
-    answers: [
-      { id: 'a47ac10b-58cc-4372-a567-0e02b2c3d478', text: 'Information Technology' },
-      { id: 'a47ac10b-58cc-4372-a567-0e02b2c3d479', text: 'Innovative Tools' },
-      { id: 'a47ac10b-58cc-4372-a567-0e02b2c3d470', text: 'Internet Transfer' },
-    ],
-  },
-  {
-    id: 'b47ac10b-58cc-4372-a567-0e02b2c3d471',
-    text: 'Какой инструмент относится к нейросетям?',
-    answers: [
-      { id: 'c47ac10b-58cc-4372-a567-0e02b2c3d472', text: 'Gemini' },
-      { id: 'c47ac10b-58cc-4372-a567-0e02b2c3d473', text: 'Webpack' },
-      { id: 'c47ac10b-58cc-4372-a567-0e02b2c3d474', text: 'Docker' },
-    ],
-  },
-  {
-    id: 'd47ac10b-58cc-4372-a567-0e02b2c3d475',
-    text: 'Что такое QR-код?',
-    answers: [
-      { id: 'e47ac10b-58cc-4372-a567-0e02b2c3d476', text: 'Двумерный штрихкод' },
-      { id: 'e47ac10b-58cc-4372-a567-0e02b2c3d477', text: 'Формат аудио' },
-      { id: 'e47ac10b-58cc-4372-a567-0e02b2c3d478', text: 'Тип базы данных' },
-    ],
-  },
-];
 
-const API_ENDPOINT = 'https://tou-event.ddns.net/api/v1/quiz/check/test';
+
+import { API_V1, tgHeaders } from '../../lib/api';
+// Endpoint for checking test results (adjusted to hyphen path per backend spec)
+const API_ENDPOINT = `${API_V1}/quiz/check-test`;
+const API_QUESTIONS = `${API_V1}/quiz/questions`;
+
+// Legacy token logic removed; backend now relies on telegram-id header.
 
 function Quiz() {
   const [started, setStarted] = useState(false); // экран "Начать тест"
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [qLoading, setQLoading] = useState(false);
+  const [qError, setQError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [resultMsg, setResultMsg] = useState<string | null>(null);
+  const [resultCorrect, setResultCorrect] = useState<number | null>(null);
+  const [resultTotal, setResultTotal] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const { user, awardCoins } = useAuth();
+  const [showHelp, setShowHelp] = useState(false);
   const [awarding, setAwarding] = useState(false);
   const [awardError, setAwardError] = useState<string | null>(null);
+  // Timing & scoring
+  const LIMIT_MINUTES = 20;
+  const LIMIT_MS = LIMIT_MINUTES * 60 * 1000;
+  const [startTime, setStartTime] = useState<number | null>(null);
+  const [nowTs, setNowTs] = useState<number>(Date.now());
+  const [autoSubmitted, setAutoSubmitted] = useState(false);
+  const elapsedMs = startTime ? nowTs - startTime : 0;
+  const remainingMs = Math.max(0, LIMIT_MS - elapsedMs);
+  const timePercentUsed = startTime ? (elapsedMs / LIMIT_MS) * 100 : 0; // 0..100
+  const timeEfficiencyPercent = Math.max(0, 100 - timePercentUsed);
+  const [finalScore, setFinalScore] = useState<number | null>(null);
+  const [rawPoints, setRawPoints] = useState<number | null>(null);
+  const [bonusPoints, setBonusPoints] = useState<number | null>(null);
 
   const q = questions[index];
   const isLast = index === questions.length - 1;
-  const canNext = Boolean(selected[q?.id]);
+  const canNext = q ? Boolean(selected[q.id]) : false;
+
+  const loadQuestions = async () => {
+    if (!user?.telegramId) {
+      setQError('Нет идентификатора Telegram. Авторизуйтесь заново.');
+      return;
+    }
+    setQLoading(true);
+    setQError(null);
+    try {
+      const res = await fetch(API_QUESTIONS, {
+        method: 'GET',
+        headers: { ...tgHeaders(user.telegramId.toString()) },
+      });
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) throw new Error(data?.message || 'Не удалось загрузить вопросы');
+      if (!Array.isArray(data)) throw new Error('Неверный формат вопросов');
+      setQuestions(data as Question[]);
+      setIndex(0);
+      setSelected({});
+    } catch (e: any) {
+      setQError(e?.message || 'Не удалось загрузить вопросы');
+    } finally {
+      setQLoading(false);
+    }
+  };
+
+  // Загружаем вопросы при старте квиза, если их ещё нет
+  useEffect(() => {
+    if (started && questions.length === 0 && !qLoading && !qError) {
+      loadQuestions();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [started]);
+
+  // Start timer when quiz begins (and not already started)
+  useEffect(() => {
+    if (started && !resultMsg && startTime == null) {
+      setStartTime(Date.now());
+    }
+  }, [started, resultMsg, startTime]);
+
+  // Tick interval
+  useEffect(() => {
+    if (!startTime || resultMsg) return;
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startTime, resultMsg]);
+
+  // Auto-submit on timeout
+  useEffect(() => {
+    if (!startTime || resultMsg || autoSubmitted) return;
+    if (elapsedMs >= LIMIT_MS) {
+      setAutoSubmitted(true);
+      submitQuiz();
+    }
+  }, [elapsedMs, startTime, resultMsg, autoSubmitted]);
+
+  const formatTime = (ms: number) => {
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+  };
 
   const goNext = () => {
     if (!canNext) return;
@@ -64,6 +123,10 @@ function Quiz() {
   const goPrev = () => setIndex((i) => Math.max(0, i - 1));
 
   const submitQuiz = async () => {
+    if (!user?.telegramId) {
+      setErrorMsg('Нет идентификатора Telegram. Авторизуйтесь заново.');
+      return;
+    }
     setSubmitting(true);
     setErrorMsg(null);
     setResultMsg(null);
@@ -73,20 +136,37 @@ function Quiz() {
           .filter((qq) => selected[qq.id])
           .map((qq) => ({ questionId: qq.id, answerId: selected[qq.id] })),
       };
-
       const res = await fetch(API_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(user?.telegramId ? { Authorization: user.telegramId } : {}),
+          ...tgHeaders(user.telegramId.toString()),
         },
         body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || 'Ошибка отправки результатов');
-      setResultMsg('Квиз отправлен! Результаты учтены.');
+      // Expecting data.results like "3/5"
+      const raw = String((data as any)?.results || '').trim();
+      const m = raw.match(/^(\d+)\s*\/\s*(\d+)$/);
+      if (m) {
+        const correct = parseInt(m[1], 10);
+        const total = parseInt(m[2], 10);
+        setResultCorrect(correct);
+        setResultTotal(total);
+        setResultMsg('Проверка завершена');
+        // Scoring: raw points = correct * 2, bonus = raw * (timeEfficiencyPercent/100), final = raw + bonus, rounded
+        const rp = correct * 2;
+        const bonus = Math.round(rp * (timeEfficiencyPercent / 100));
+        const final = rp + bonus;
+        setRawPoints(rp);
+        setBonusPoints(bonus);
+        setFinalScore(final);
+      } else {
+        setResultMsg('Квиз отправлен!');
+      }
     } catch (e: any) {
-      setErrorMsg(e.message || 'Не удалось отправить результаты');
+      setErrorMsg(e?.message || 'Не удалось отправить результаты');
     } finally {
       setSubmitting(false);
     }
@@ -100,37 +180,55 @@ function Quiz() {
           <div className="bg-surface border border-border-color rounded-xl p-6 shadow-lg mb-6">
             <p className="text-xs text-text-secondary leading-relaxed mb-4">
               Вы пройдёте небольшой тест по базовым понятиям цифровизации, нейросетям и технологиям.
-              Время не ограничено. Баллы начисляются после отправки последнего ответа.
+              На прохождение отводится {LIMIT_MINUTES} минут. Баллы начисляются после отправки последнего ответа.
             </p>
             <ul className="text-[11px] text-text-secondary space-y-1 mb-5 list-disc list-inside">
               <li>Ответьте на каждый вопрос, прежде чем перейти дальше.</li>
               <li>Можно вернуться к предыдущим вопросам до отправки.</li>
-              <li>Для подсчёта результата требуется авторизационный токен.</li>
+              <li>Для подсчёта результата нужна активная Telegram авторизация.</li>
             </ul>
-            <button
-              onClick={() => setStarted(true)}
-              className="px-5 py-3 rounded-md bg-primary text-background font-semibold text-[12px] border border-border-color hover:opacity-90"
-            >
-              Начать тест
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setStarted(true)}
+                className="px-5 py-3 rounded-md bg-primary text-background font-semibold text-[12px] border border-border-color hover:opacity-90"
+              >
+                Начать тест
+              </button>
+              <button
+                onClick={() => setShowHelp(true)}
+                className="px-5 py-3 rounded-md bg-background text-text-primary font-semibold text-[12px] border border-border-color hover:border-primary"
+              >Как пройти</button>
+            </div>
           </div>
         )}
         {started && !resultMsg && (
-          <p className="text-xs text-text-secondary mb-6">Отвечайте на вопросы. Время не ограничено.</p>
+          <p className="text-xs text-text-secondary mb-6">Отвечайте на вопросы. Таймер вверху карточки.</p>
         )}
 
         {/* После завершения */}
         {resultMsg && (
           <div className="bg-surface border border-border-color rounded-xl p-6 shadow-lg mb-6">
             <p className="text-sm text-primary font-semibold mb-2">{resultMsg}</p>
+            {resultCorrect != null && resultTotal != null && (
+              <div className="text-xs text-text-primary mb-3 space-y-1">
+                <div>Правильных ответов: <span className="text-primary font-semibold">{resultCorrect}</span> из {resultTotal}</div>
+                {finalScore != null && rawPoints != null && bonusPoints != null && (
+                  <>
+                    <div>Баллы за правильные ответы: <span className="font-semibold">{rawPoints}</span></div>
+                    <div>Баллы за время: <span className="font-semibold">{bonusPoints}</span></div>
+                    <div>Итого баллов: <span className="text-primary font-semibold">{finalScore}</span></div>
+                  </>
+                )}
+              </div>
+            )}
             <p className="text-[11px] text-text-secondary mb-4">Можете закрыть страницу или вернуться назад.</p>
             {!user?.isQuiz && (
               <div className="mb-3">
                 <button
                   disabled={awarding}
-                  onClick={async () => { setAwardError(null); setAwarding(true); try { await awardCoins('isQuiz', 50); } catch(e:any){ setAwardError(e?.message||'Ошибка награды'); } finally { setAwarding(false);} }}
+                  onClick={async () => { setAwardError(null); setAwarding(true); try { await awardCoins('isQuiz', finalScore ?? 50); } catch(e:any){ setAwardError(e?.message||'Ошибка награды'); } finally { setAwarding(false);} }}
                   className="px-3 py-1 bg-primary/20 text-primary border border-primary/40 rounded text-xs disabled:opacity-50"
-                >{awarding ? 'Начисление...' : 'Ознакомиться (награда)'}
+                >{awarding ? 'Начисление...' : `Получить награду (${finalScore ?? 0})`}
                 </button>
                 {awardError && <div className="text-[10px] text-red-400 mt-1">{awardError}</div>}
               </div>
@@ -141,6 +239,13 @@ function Quiz() {
                 setIndex(0);
                 setSelected({});
                 setResultMsg(null);
+                setResultCorrect(null);
+                setResultTotal(null);
+                setStartTime(null);
+                setFinalScore(null);
+                setRawPoints(null);
+                setBonusPoints(null);
+                setAutoSubmitted(false);
               }}
               className="px-4 py-2 rounded-md border border-border-color text-[11px] bg-background/40 text-text-primary hover:border-primary"
             >
@@ -152,6 +257,23 @@ function Quiz() {
         {/* Вопросы */}
         {started && !resultMsg && (
         <div className="bg-surface border border-border-color rounded-xl p-5 shadow-lg">
+          {qLoading && (
+            <div className="text-xs text-text-secondary">Загружаем вопросы...</div>
+          )}
+          {qError && (
+            <div className="text-xs text-red-300 mb-3">{qError} <button onClick={loadQuestions} className="underline">Повторить</button></div>
+          )}
+          {!qLoading && !qError && !q && (
+            <div className="text-xs text-text-secondary">Вопросы недоступны. Попробуйте позже.</div>
+          )}
+          {q && (
+          <>
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="text-[11px] text-text-secondary">
+              Осталось времени: <span className={remainingMs < 60_000 ? 'text-red-400 font-semibold' : 'text-primary font-semibold'}>{formatTime(remainingMs)}</span>
+            </div>
+            <div className="text-[11px] text-text-secondary">{(timePercentUsed).toFixed(1)}% времени</div>
+          </div>
           <div className="flex items-start justify-between gap-3">
             <h2 className="text-md font-bold text-primary">Вопрос {index + 1} из {questions.length}</h2>
             <span className="text-[11px] text-text-secondary">ID: {q.id.slice(0, 8)}</span>
@@ -204,6 +326,8 @@ function Quiz() {
               </button>
             )}
           </div>
+          </>
+          )}
         </div>
         )}
 
@@ -211,6 +335,23 @@ function Quiz() {
         {errorMsg && !resultMsg && (
           <div className="mt-4 p-3 rounded-md border border-border-color bg-background text-[12px] text-red-300">
             {errorMsg}
+          </div>
+        )}
+        {showHelp && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setShowHelp(false)} />
+            <div className="relative bg-surface border border-border-color rounded-xl p-5 w-full max-w-md shadow-lg text-xs">
+              <div className="text-md font-bold text-primary mb-2">Как пройти квиз</div>
+              <ol className="list-decimal list-inside space-y-1 text-text-secondary">
+                <li>Нажмите «Начать тест».</li>
+                <li>Выберите ответ в каждом вопросе и нажмите «Далее».</li>
+                <li>На последнем вопросе нажмите «Завершить квиз».</li>
+                <li>После успешной отправки на экране появится кнопка для получения награды.</li>
+              </ol>
+              <div className="text-right mt-3">
+                <button onClick={() => setShowHelp(false)} className="px-3 py-1 text-[11px] bg-primary/20 text-primary border border-primary/40 rounded">Понятно</button>
+              </div>
+            </div>
           </div>
         )}
       </div>
