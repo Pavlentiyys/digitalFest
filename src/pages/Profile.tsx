@@ -128,12 +128,12 @@ function Profile() {
           <div className="mt-6">
             <h2 className="text-sm font-semibold text-text-primary mb-2">Прогресс по активностям</h2>
             {(() => {
+              const qrSub = [!!user.isTranscribed, !!user.isTexted, !!user.isImageGeneration];
+              const qrDoneCount = qrSub.filter(Boolean).length;
               const items = [
                 { key: 'isAr', label: 'AR‑игра', done: !!user.isAr, href: '/ar-image', hint: 'Найдите постер «Отсканируй меня» и наведите камеру.' },
+                { key: 'qr', label: 'QR‑квесты', done: qrDoneCount === 3, href: '/qr', hint: `Сканируйте QR в популярных местах. Прогресс: ${qrDoneCount}/3` },
                 { key: 'isQuiz', label: 'IT‑Квиз', done: !!user.isQuiz, href: '/quiz', hint: 'Проверьте знания об IT и AI. Есть бонус за скорость.' },
-                { key: 'isTranscribed', label: 'QR‑квест: Аудио → Текст', done: !!user.isTranscribed, href: '/qr', hint: 'Сканируйте QR в популярных местах.' },
-                { key: 'isTexted', label: 'QR‑квест: Текст → Текст', done: !!user.isTexted, href: '/qr', hint: 'Сканируйте QR в популярных местах.' },
-                { key: 'isImageGeneration', label: 'QR‑квест: Текст → Изображение', done: !!user.isImageGeneration, href: '/qr', hint: 'Сканируйте QR в популярных местах.' },
               ];
               const doneCount = items.filter(it => it.done).length;
               const total = items.length;

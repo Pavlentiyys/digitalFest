@@ -103,6 +103,17 @@ const ensureMindARGlobals = async () => {
   }
 };
 
+// Ensure GLTFLoader (non-module build) is available on window.THREE
+const ensureGLTFLoader = async () => {
+  if ((window as any).THREE?.GLTFLoader) return;
+  await loadOneOf([
+    'https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/loaders/GLTFLoader.js',
+    'https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js',
+    'https://unpkg.com/three@0.146.0/examples/js/loaders/GLTFLoader.js',
+  ]);
+  if (!(window as any).THREE?.GLTFLoader) throw new Error('GLTFLoader not available');
+};
+
 const findTargetPath = async (): Promise<string> => {
   const candidates = ['/targets/target.mind', '/target/target.mind'];
   for (const c of candidates) {
@@ -121,51 +132,7 @@ const findTargetPath = async (): Promise<string> => {
   return '/targets/target.mind';
 };
 
-const makeCoinFaceTexture = (diameter = 512, bg = '#1b3439', fg = '#ffd166', symbol: string = '₿') => {
-  const canvas = document.createElement('canvas');
-  canvas.width = diameter;
-  canvas.height = diameter;
-  const ctx = canvas.getContext('2d')!;
-
-  // background circle
-  ctx.fillStyle = bg;
-  ctx.beginPath();
-  ctx.arc(diameter / 2, diameter / 2, diameter / 2, 0, Math.PI * 2);
-  ctx.fill();
-
-  // inner rim
-  ctx.strokeStyle = '#40e0d0';
-  ctx.lineWidth = diameter * 0.03;
-  ctx.beginPath();
-  ctx.arc(diameter / 2, diameter / 2, diameter * 0.46, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // bitcoin symbol (₿) or fallback B
-  ctx.fillStyle = fg;
-  ctx.font = `${Math.floor(diameter * 0.55)}px "Press Start 2P", system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(symbol, diameter / 2, diameter / 2 + diameter * 0.02);
-
-  // subtle lines
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  ctx.lineWidth = 2;
-  for (let i = 0; i < 20; i++) {
-    const angle = (i / 20) * Math.PI * 2;
-    const r1 = diameter * 0.2;
-    const r2 = diameter * 0.46;
-    ctx.beginPath();
-    ctx.moveTo(diameter / 2 + Math.cos(angle) * r1, diameter / 2 + Math.sin(angle) * r1);
-    ctx.lineTo(diameter / 2 + Math.cos(angle) * r2, diameter / 2 + Math.sin(angle) * r2);
-    ctx.stroke();
-  }
-
-  // CanvasTexture будет создан позже через ESM THREE в месте использования
-  const texture = canvas as unknown as any;
-  texture.anisotropy = 8;
-  texture.needsUpdate = true;
-  return texture;
-};
+// (Deprecated) Texture-based coin generator was replaced by GLTF models from public/objects
 
 const ARImage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -192,9 +159,9 @@ const ARImage: React.FC = () => {
     let renderer: any;
     let scene: any;
     let camera: any;
-  let coinBTC: any;
-  let coinETH: any;
-  let coinDOGE: any;
+  let modelBTC: any;
+  let modelETH: any;
+  let modelDOGE: any;
     let fallbackVideo: HTMLVideoElement | null = null; // raw getUserMedia fallback
     // use window globals for UMD
 
@@ -208,8 +175,9 @@ const ARImage: React.FC = () => {
     const start = async () => {
       try {
         setLoading(true);
-        setLoadingStep('Загрузка библиотек AR...');
-        await withTimeout(ensureMindARGlobals(), 12000, 'загрузка скриптов');
+  setLoadingStep('Загрузка библиотек AR...');
+  await withTimeout(ensureMindARGlobals(), 12000, 'загрузка скриптов');
+  await withTimeout(ensureGLTFLoader(), 8000, 'загрузка GLTFLoader');
   // Globals loaded
         if (!containerRef.current) return;
 
@@ -241,28 +209,33 @@ const ARImage: React.FC = () => {
     const light = new (window as any).THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
         scene.add(light);
 
-    // Helper to build coin mesh
-    const buildCoin = (symbol: string, bg: string, fg: string) => {
-      const radius = 0.45;
-      const thickness = 0.12;
-      const radialSeg = 64;
-      const geo = new (window as any).THREE.CylinderGeometry(radius, radius, thickness, radialSeg);
-      const gold = new (window as any).THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.85, roughness: 0.25 });
-      const faceTexCanvas = makeCoinFaceTexture(512, bg, fg, symbol);
-      const faceTex = new (window as any).THREE.CanvasTexture(faceTexCanvas);
-      const faceMat = new (window as any).THREE.MeshStandardMaterial({ map: faceTex, metalness: 0.6, roughness: 0.35 });
-      const materials = [gold, faceMat, faceMat];
-      const mesh = new (window as any).THREE.Mesh(geo, materials);
-      mesh.rotation.x = Math.PI / 2;
-      return mesh;
+    // Helper to load and fit GLTF/GLB model
+    const loadAndFitModel = async (url: string, targetSize = 0.9) => {
+      const loader = new (window as any).THREE.GLTFLoader();
+      const gltf = await loader.loadAsync(url);
+      const obj = gltf.scene || gltf.scenes?.[0];
+      if (!obj) return null;
+      // Normalize scale
+      const box = new (window as any).THREE.Box3().setFromObject(obj);
+      const size = new (window as any).THREE.Vector3();
+      box.getSize(size);
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const s = targetSize / maxDim;
+      obj.scale.setScalar(s);
+      // Optional small elevation to avoid z-fighting
+      obj.position.set(0, 0, 0);
+      return obj;
     };
 
     // Anchors: 0 BTC, 1 ETH, 2 DOGE (target.mind must contain 3 targets)
     const anchorBTC = mindarThree.addAnchor(0);
     const groupBTC = new (window as any).THREE.Group();
     anchorBTC.group.add(groupBTC);
-    coinBTC = buildCoin('₿', '#0f262b', '#ffd166');
-    groupBTC.add(coinBTC); groupBTC.visible = false;
+    try {
+      modelBTC = await loadAndFitModel('/objects/bitcoin.glb');
+      if (modelBTC) groupBTC.add(modelBTC);
+    } catch {}
+    groupBTC.visible = false;
   anchorBTC.onTargetFound = () => { groupBTC.visible = true; setActiveCoin('btc'); console.log('[AR] BTC detected (anchor 0)'); };
     anchorBTC.onTargetLost  = () => { groupBTC.visible = false; setActiveCoin(c => c==='btc'?null:c); };
 
@@ -270,8 +243,11 @@ const ARImage: React.FC = () => {
       const anchorETH = mindarThree.addAnchor(1);
       const groupETH = new (window as any).THREE.Group();
       anchorETH.group.add(groupETH);
-      coinETH = buildCoin('Ξ', '#11192a', '#7dd3fc');
-      groupETH.add(coinETH); groupETH.visible = false;
+      try {
+        modelETH = await loadAndFitModel('/objects/ethereum.glb');
+        if (modelETH) groupETH.add(modelETH);
+      } catch {}
+      groupETH.visible = false;
   anchorETH.onTargetFound = () => { groupETH.visible = true; setActiveCoin('eth'); console.log('[AR] ETH detected (anchor 1)'); };
       anchorETH.onTargetLost  = () => { groupETH.visible = false; setActiveCoin(c => c==='eth'?null:c); };
     } catch {/* if target.mind has only one target, ignore */}
@@ -280,8 +256,11 @@ const ARImage: React.FC = () => {
       const anchorDOGE = mindarThree.addAnchor(2);
       const groupDOGE = new (window as any).THREE.Group();
       anchorDOGE.group.add(groupDOGE);
-      coinDOGE = buildCoin('Ð', '#1b3439', '#fbbf24');
-      groupDOGE.add(coinDOGE); groupDOGE.visible = false;
+      try {
+        modelDOGE = await loadAndFitModel('/objects/dogecoin.glb');
+        if (modelDOGE) groupDOGE.add(modelDOGE);
+      } catch {}
+      groupDOGE.visible = false;
   anchorDOGE.onTargetFound = () => { groupDOGE.visible = true; setActiveCoin('doge'); console.log('[AR] DOGE detected (anchor 2)'); };
       anchorDOGE.onTargetLost  = () => { groupDOGE.visible = false; setActiveCoin(c => c==='doge'?null:c); };
     } catch {/* ignore when no 3rd target */}
@@ -357,9 +336,9 @@ const ARImage: React.FC = () => {
         }
 
         renderer.setAnimationLoop(() => {
-          if (coinBTC && coinBTC.parent?.visible) coinBTC.rotation.z += 0.01;
-          if (coinETH && coinETH.parent?.visible) coinETH.rotation.z += 0.01;
-          if (coinDOGE && coinDOGE.parent?.visible) coinDOGE.rotation.z += 0.01;
+          if (modelBTC && modelBTC.parent?.visible) modelBTC.rotation.y += 0.01;
+          if (modelETH && modelETH.parent?.visible) modelETH.rotation.y += 0.01;
+          if (modelDOGE && modelDOGE.parent?.visible) modelDOGE.rotation.y += 0.01;
           renderer.render(scene, camera);
         });
         if (!stopped) {
