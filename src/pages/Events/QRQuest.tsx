@@ -34,8 +34,11 @@ const QRQuest: React.FC = () => {
   const [scanning, setScanning] = useState(true);
   // No overlay UI; we navigate directly on successful scan
   const [loading, setLoading] = useState(true);
+  const [resolving, setResolving] = useState(false);
   const streamRef = useRef<MediaStream | null>(null);
   const navigate = useNavigate();
+  const [lastRaw, setLastRaw] = useState<string | null>(null);
+  const [lastFinal, setLastFinal] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   // const { user } = useAuth();
 
@@ -89,27 +92,66 @@ const QRQuest: React.FC = () => {
             const code = window.jsQR?.(img.data, w, h, { inversionAttempts: 'dontInvert' });
             if (code?.data) {
               const raw = String(code.data).trim();
-              try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
-              setScanning(false);
               // Expecting either full http(s) URL or internal reward pattern like qr-reward:isTranscribed
               if (isHttpUrl(raw)) {
-                // If QR points to same-origin SPA route -> use client-side navigation to avoid full reload & 404 on static hosting.
-                try {
-                  const url = new URL(raw);
-                  const sameOrigin = url.origin === window.location.origin;
-                  if (sameOrigin) {
-                    navigate(url.pathname + url.search + url.hash);
-                  } else {
-                    window.location.assign(raw);
+                setLastRaw(raw);
+                // Следующий шаг: попытаться получить финальный URL (последний после редиректов)
+                const followRedirects = async (u: string): Promise<string> => {
+                  const timeoutMs = 5000;
+                  const attempt = async (method: 'HEAD' | 'GET') => {
+                    const ctrl = new AbortController();
+                    const to = setTimeout(() => ctrl.abort(), timeoutMs);
+                    try {
+                      const resp = await fetch(u, { method, redirect: 'follow', mode: 'cors', signal: ctrl.signal });
+                      clearTimeout(to);
+                      return resp.url || u;
+                    } catch {
+                      clearTimeout(to);
+                      throw new Error('fail');
+                    }
+                  };
+                  // Пробуем HEAD, если ломается — GET
+                  try { return await attempt('HEAD'); } catch {}
+                  try { return await attempt('GET'); } catch {}
+                  return u; // fallback — оригинал
+                };
+
+                setResolving(true);
+                setScanning(false);
+                (async () => {
+                  const finalUrl = await followRedirects(raw).catch(() => raw);
+                  setLastFinal(finalUrl);
+                  setResolving(false);
+                  try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+                  try {
+                    const url = new URL(finalUrl);
+                    if (url.origin === window.location.origin) {
+                      // Внутренний путь — используем SPA навигацию для TWA, чтобы не потерять состояние.
+                      const target = (url.pathname || '/') + url.search + url.hash;
+                      if (target === '/' || target === '') {
+                        navigate('/');
+                      } else {
+                        navigate(target);
+                      }
+                    } else {
+                      // Внешний — прямой переход (TWA откроет внешний браузер или webview)
+                      window.location.assign(finalUrl);
+                    }
+                  } catch {
+                    window.location.assign(finalUrl);
                   }
-                } catch {
-                  window.location.assign(raw);
-                }
+                })();
+                return;              
               } else if (raw.startsWith('qr-reward:')) {
                 const feature = raw.split(':')[1];
+                try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+                setScanning(false);
                 navigate(`/qr-reward/${feature}`);
               } else {
+                // unknown format, keep scanning
                 setError('Неизвестный формат QR');
+                setTimeout(() => setError(null), 2000);
+                return;
               }
             }
           } catch (e: any) {
@@ -158,9 +200,9 @@ const QRQuest: React.FC = () => {
       </div>
 
       {/* Loading */}
-      {loading && (
+      {(loading || resolving) && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-          <div className="text-white text-sm">Запуск камеры...</div>
+          <div className="text-white text-sm">{loading ? 'Запуск камеры...' : 'Переход...'}</div>
         </div>
       )}
 
@@ -168,6 +210,19 @@ const QRQuest: React.FC = () => {
       {error && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-surface border border-border-color text-xs text-white px-3 py-2 rounded">
           {error}
+        </div>
+      )}
+      {/* Debug Overlay */}
+      {(lastRaw || lastFinal) && (
+        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 w-[90%] max-w-lg bg-black/70 backdrop-blur border border-primary/30 rounded-lg p-3 text-[10px] text-white space-y-1 z-50">
+          <div className="font-semibold text-primary">DEBUG QR</div>
+          {lastRaw && <div><span className="text-primary/70">raw:</span> {lastRaw}</div>}
+          {lastFinal && <div><span className="text-primary/70">final:</span> {lastFinal}</div>}
+          <div className="flex flex-wrap gap-2 mt-2">
+            {lastRaw && <button onClick={() => window.location.assign(lastRaw)} className="px-2 py-1 rounded bg-primary/20 border border-primary/40">Открыть raw</button>}
+            {lastFinal && <button onClick={() => window.location.assign(lastFinal)} className="px-2 py-1 rounded bg-primary/20 border border-primary/40">Открыть final</button>}
+            <button onClick={() => { setLastRaw(null); setLastFinal(null); setError(null); setScanning(true); }} className="px-2 py-1 rounded bg-background border border-border-color">Очистить</button>
+          </div>
         </div>
       )}
 

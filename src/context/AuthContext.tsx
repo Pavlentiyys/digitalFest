@@ -134,13 +134,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     setError(null);
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json', ...tgHeaders(user.telegramId, { includeAuthorization: true }) };
-      const { data } = await httpJson<any>(`${API_V1}/auth/${encodeURIComponent(user.telegramId)}/profile`, {
-        method: 'PUT',
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        ...tgHeaders(user.telegramId, { includeAuthorization: true })
+      };
+      // API expects Authorization: telegramId and body with username/group only.
+      // Use PATCH (semantically partial update). If server still requires PUT, it will accept PATCH or we can revert.
+      const res = await fetch(`${API_V1}/auth/${encodeURIComponent(user.telegramId)}/profile`, {
+        method: 'PATCH',
         headers,
-        body: JSON.stringify(changes),
+        body: JSON.stringify({ username: changes.username, group: changes.group }),
       });
-  setUser(prev => prev ? { ...prev, username: data.username ?? prev.username, group: data.group ?? prev.group, avatarUrl: prev.avatarUrl } : prev);
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(msg || `HTTP ${res.status}`);
+      }
+      // Try parse updated user; if not provided, do optimistic update then refresh.
+      let updated: Partial<AuthUser> | null = null;
+      try {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) updated = await res.json();
+      } catch {}
+      setUser(prev => prev ? { ...prev, username: changes.username, group: changes.group, ...(updated || {}) } : prev);
+      // Refresh canonical user data silently (do not block UI)
+      refreshUser();
     } catch (e: any) {
       setError(e?.message || 'Не удалось обновить профиль');
       throw e;

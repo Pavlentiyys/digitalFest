@@ -31,10 +31,11 @@ function Quiz() {
   const [resultCorrect, setResultCorrect] = useState<number | null>(null);
   const [resultTotal, setResultTotal] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const { user, awardCoins } = useAuth();
+  const { user } = useAuth();
   const [showHelp, setShowHelp] = useState(false);
   const [awarding, setAwarding] = useState(false);
   const [awardError, setAwardError] = useState<string | null>(null);
+  const [awarded, setAwarded] = useState(false);
   // Timing & scoring
   const LIMIT_MINUTES = 20;
   const LIMIT_MS = LIMIT_MINUTES * 60 * 1000;
@@ -155,8 +156,8 @@ function Quiz() {
         setResultCorrect(correct);
         setResultTotal(total);
         setResultMsg('Проверка завершена');
-        // Scoring: raw points = correct * 2, bonus = raw * (timeEfficiencyPercent/100), final = raw + bonus, rounded
-        const rp = correct * 2;
+        // Scoring: raw points = correct * 5, bonus = raw * (timeEfficiencyPercent/100), final = raw + bonus, rounded
+        const rp = correct * 5;
         const bonus = Math.round(rp * (timeEfficiencyPercent / 100));
         const final = rp + bonus;
         setRawPoints(rp);
@@ -169,6 +170,28 @@ function Quiz() {
       setErrorMsg(e?.message || 'Не удалось отправить результаты');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const claimReward = async () => {
+    if (!user?.telegramId || finalScore == null || awarded) return;
+    try {
+      setAwardError(null);
+      setAwarding(true);
+      const res = await fetch(`${API_V1}/auth/${encodeURIComponent(user.telegramId)}/coins`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...tgHeaders(user.telegramId.toString(), { includeAuthorization: true }) },
+        body: JSON.stringify({ coins: finalScore, feature: 'isQuiz' }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || 'Не удалось начислить награду');
+      }
+      setAwarded(true);
+    } catch (e: any) {
+      setAwardError(e?.message || 'Ошибка начисления награды');
+    } finally {
+      setAwarding(false);
     }
   };
 
@@ -222,35 +245,23 @@ function Quiz() {
               </div>
             )}
             <p className="text-[11px] text-text-secondary mb-4">Можете закрыть страницу или вернуться назад.</p>
-            {!user?.isQuiz && (
-              <div className="mb-3">
-                <button
-                  disabled={awarding}
-                  onClick={async () => { setAwardError(null); setAwarding(true); try { await awardCoins('isQuiz', finalScore ?? 50); } catch(e:any){ setAwardError(e?.message||'Ошибка награды'); } finally { setAwarding(false);} }}
-                  className="px-3 py-1 bg-primary/20 text-primary border border-primary/40 rounded text-xs disabled:opacity-50"
-                >{awarding ? 'Начисление...' : `Получить награду (${finalScore ?? 0})`}
-                </button>
-                {awardError && <div className="text-[10px] text-red-400 mt-1">{awardError}</div>}
-              </div>
+            {/* Auto-award status */}
+            <div className="mb-1 text-[11px] text-text-secondary">
+              {awarding && 'Начисление награды...'}
+              {!awarding && awarded && finalScore != null && (
+                <span>Награда начислена: <span className="text-primary font-semibold">{finalScore}</span></span>
+              )}
+              {awardError && (
+                <span className="text-red-400">{awardError}</span>
+              )}
+            </div>
+            {!awarded && finalScore != null && (
+              <button
+                onClick={claimReward}
+                disabled={awarding}
+                className="mt-2 px-4 py-2 text-[11px] rounded-md border border-border-color bg-primary text-background disabled:opacity-40"
+              >Забрать баллы ({finalScore})</button>
             )}
-            <button
-              onClick={() => {
-                setStarted(false);
-                setIndex(0);
-                setSelected({});
-                setResultMsg(null);
-                setResultCorrect(null);
-                setResultTotal(null);
-                setStartTime(null);
-                setFinalScore(null);
-                setRawPoints(null);
-                setBonusPoints(null);
-                setAutoSubmitted(false);
-              }}
-              className="px-4 py-2 rounded-md border border-border-color text-[11px] bg-background/40 text-text-primary hover:border-primary"
-            >
-              Пройти ещё раз
-            </button>
           </div>
         )}
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { BoltIcon, CameraIcon, CheckCircleIcon, XMarkIcon } from '@heroicons/react/24/solid';
 
@@ -41,6 +42,8 @@ const FACTS: { title: string; text: string; points: number }[] = [
 // Вспомогательно: генерация псевдо‑UUID (устраивает для локальной логики)
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+const AR_PROGRESS_KEY = (tid?: string) => `progress:${tid || 'anon'}:arCount`;
+
 function ARGame() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -52,6 +55,10 @@ function ARGame() {
   const [modal, setModal] = useState<{ title: string; text: string; points: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { user, awardCoins } = useAuth();
+  const navigate = useNavigate();
+  const [arCount, setArCount] = useState<number>(() => {
+    try { return parseInt(localStorage.getItem(AR_PROGRESS_KEY(user?.telegramId)) || '0', 10) || 0; } catch { return 0; }
+  });
   const [awarding, setAwarding] = useState(false);
   const [awardError, setAwardError] = useState<string | null>(null);
   const earned = targets.filter(t => t.collected).length > 0; // simple condition: collected at least one
@@ -227,19 +234,39 @@ function ARGame() {
           </div>
         )}
         {/* Award button (inline) */}
-        {started && !user?.isAr && earned && (
+        {started && earned && arCount < 3 && (
           <div className="mt-4">
             <button
               disabled={awarding}
               onClick={async () => {
-                setAwardError(null); setAwarding(true);
-                try { await awardCoins('isAr', 50); } catch (e:any){ setAwardError(e?.message||'Ошибка награды'); } finally { setAwarding(false); }
+                setAwardError(null);
+                setAwarding(true);
+                // Рассчитываем следующий счётчик попыток
+                const next = Math.min(3, arCount + 1);
+                try { localStorage.setItem(AR_PROGRESS_KEY(user?.telegramId), String(next)); } catch {}
+                setArCount(next);
+                try {
+                  // Начисляем награду и устанавливаем feature isAr только на 3‑й игре
+                  if (next === 3 && !user?.isAr) {
+                    await awardCoins('isAr', 50);
+                  }
+                } catch (e:any) {
+                  setAwardError(e?.message || 'Ошибка награды');
+                } finally {
+                  setAwarding(false);
+                }
+                if (next >= 3) {
+                  setTimeout(() => navigate('/'), 300);
+                }
               }}
               className="px-4 py-2 bg-primary/20 text-primary border border-primary/40 rounded text-sm disabled:opacity-50"
-            >{awarding ? 'Начисление...' : 'Ознакомиться (награда)'}
+            >{awarding ? 'Начисление...' : `Завершить AR (${arCount + 1}/3)`}
             </button>
             {awardError && <div className="text-[11px] text-red-400 mt-1">{awardError}</div>}
           </div>
+        )}
+        {started && arCount >= 3 && (
+          <div className="mt-4 text-xs text-green-400">AR‑активность полностью завершена (3/3).</div>
         )}
       </div>
     </div>

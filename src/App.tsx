@@ -14,6 +14,7 @@ import BottomNav from './components/BottomNav';
 import { useAuth } from './context/AuthContext';
 import ARGame from './pages/Events/ARGame';
 import ARFact from './pages/Events/ARFact';
+import Rating from './pages/Rating';
 
 function App() {
   const { user } = useAuth();
@@ -36,6 +37,10 @@ function App() {
           <Route path="/ar-image" element={isAuthed ? (!hasAr ? <ARImage /> : <Navigate to="/" />) : <Navigate to="/login" />} />
           <Route path="/ar-fact/:coinId" element={isAuthed ? <ARFact /> : <Navigate to="/login" />} />
           <Route path="/qr" element={isAuthed ? <QRQuest /> : <Navigate to="/login" />} />
+          <Route
+            path="/rating"
+            element={isAuthed ? <Rating /> : <Navigate to="/" />}
+          />
           {/* Randomized routes for AI demo pages */}
           <Route path="/x-chat-7k3h9" element={isAuthed ? (!hasTexted ? <TextChat /> : <Navigate to="/" />) : <Navigate to="/login" />} />
           <Route path="/x-voice-2m1d8" element={isAuthed ? (!hasTranscribed ? <SpeechToText /> : <Navigate to="/" />) : <Navigate to="/login" />} />

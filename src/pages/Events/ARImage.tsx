@@ -205,9 +205,26 @@ const ARImage: React.FC = () => {
         scene = context.scene;
         camera = context.camera;
 
-    // Add light
-    const light = new (window as any).THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
-        scene.add(light);
+    // Color/encoding and tonemapping to improve texture appearance across devices
+    try {
+      const THREE = (window as any).THREE;
+      if ('outputColorSpace' in renderer) {
+        (renderer as any).outputColorSpace = THREE.SRGBColorSpace;
+      } else if ('outputEncoding' in renderer) {
+        (renderer as any).outputEncoding = THREE.sRGBEncoding;
+      }
+      (renderer as any).toneMappingExposure = 1.1;
+      (renderer as any).physicallyCorrectLights = true;
+    } catch {/* ignore */}
+
+  // Add lights (more robust lighting to avoid "текстур не видно")
+  const light = new (window as any).THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
+    scene.add(light);
+  const amb = new (window as any).THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(amb);
+  const dir = new (window as any).THREE.DirectionalLight(0xffffff, 1.1);
+    dir.position.set(1, 2, 1);
+    scene.add(dir);
 
     // Helper to load and fit GLTF/GLB model
     const loadAndFitModel = async (url: string, targetSize = 0.9) => {
@@ -224,6 +241,25 @@ const ARImage: React.FC = () => {
       obj.scale.setScalar(s);
       // Optional small elevation to avoid z-fighting
       obj.position.set(0, 0, 0);
+      // Ensure materials are visible from both sides (helps when model faces away or is single-sided)
+      try {
+        obj.traverse((child: any) => {
+          if (child && child.isMesh && child.material) {
+            const mat = child.material;
+            if (Array.isArray(mat)) {
+              mat.forEach((m: any) => {
+                if ('side' in m) m.side = (window as any).THREE.DoubleSide;
+                m.needsUpdate = true;
+              });
+            } else {
+              if ('side' in mat) mat.side = (window as any).THREE.DoubleSide;
+              mat.needsUpdate = true;
+            }
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+      } catch {/* ignore */}
       return obj;
     };
 
@@ -233,7 +269,11 @@ const ARImage: React.FC = () => {
     anchorBTC.group.add(groupBTC);
     try {
       modelBTC = await loadAndFitModel('/objects/bitcoin.glb');
-      if (modelBTC) groupBTC.add(modelBTC);
+      if (modelBTC) {
+        // Flip to face camera by default
+        try { modelBTC.rotation.y = Math.PI; } catch {}
+        groupBTC.add(modelBTC);
+      }
     } catch {}
     groupBTC.visible = false;
   anchorBTC.onTargetFound = () => { groupBTC.visible = true; setActiveCoin('btc'); console.log('[AR] BTC detected (anchor 0)'); };
@@ -245,7 +285,10 @@ const ARImage: React.FC = () => {
       anchorETH.group.add(groupETH);
       try {
         modelETH = await loadAndFitModel('/objects/ethereum.glb');
-        if (modelETH) groupETH.add(modelETH);
+        if (modelETH) {
+          try { modelETH.rotation.y = Math.PI; } catch {}
+          groupETH.add(modelETH);
+        }
       } catch {}
       groupETH.visible = false;
   anchorETH.onTargetFound = () => { groupETH.visible = true; setActiveCoin('eth'); console.log('[AR] ETH detected (anchor 1)'); };
@@ -258,7 +301,10 @@ const ARImage: React.FC = () => {
       anchorDOGE.group.add(groupDOGE);
       try {
         modelDOGE = await loadAndFitModel('/objects/dogecoin.glb');
-        if (modelDOGE) groupDOGE.add(modelDOGE);
+        if (modelDOGE) {
+          try { modelDOGE.rotation.y = Math.PI; } catch {}
+          groupDOGE.add(modelDOGE);
+        }
       } catch {}
       groupDOGE.visible = false;
   anchorDOGE.onTargetFound = () => { groupDOGE.visible = true; setActiveCoin('doge'); console.log('[AR] DOGE detected (anchor 2)'); };
@@ -441,6 +487,15 @@ const ARImage: React.FC = () => {
     <div className="relative min-h-screen bg-background text-text-primary">
       <div ref={containerRef} className="relative w-full h-[calc(100vh-4rem)] overflow-hidden bg-black">
         {/* MindAR will inject its own canvas & video elements here. */}
+        {/* Bottom-centered details button inside camera area */}
+        {activeCoin && (
+          <div className="pointer-events-none absolute bottom-4 left-0 right-0 flex justify-center z-[5]">
+            <button
+              className="pointer-events-auto px-4 py-2 text-[12px] bg-primary text-background rounded-md border border-primary/60 shadow hover:opacity-90"
+              onClick={() => navigate(`/ar-fact/${activeCoin}`)}
+            >Подробнее о {activeCoin.toUpperCase()}</button>
+          </div>
+        )}
       </div>
 
       {/* HUD */}
@@ -458,15 +513,7 @@ const ARImage: React.FC = () => {
           </a>
         </div>
       </div>
-      {/* Bottom-centered details button (appears when any model/marker visible) */}
-      {activeCoin && (
-        <div className="pointer-events-none absolute bottom-4 left-0 right-0 flex justify-center">
-          <button
-            className="pointer-events-auto px-4 py-2 text-[12px] bg-primary text-background rounded-md border border-primary/60 shadow hover:opacity-90"
-            onClick={() => navigate(`/ar-fact/${activeCoin}`)}
-          >Подробнее о {activeCoin.toUpperCase()}</button>
-        </div>
-      )}
+      
 
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 p-4">
